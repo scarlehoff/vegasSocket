@@ -2,12 +2,14 @@ module vegas_mod
    implicit none
    private
 
-   public :: vegas
+   public :: vegas, vegasnr
 
    integer, parameter :: dp = kind(1.d0)
 
    ! Parameters
    integer, parameter :: NDMX = 10
+   integer, parameter :: EXTERNAL_FUNCTIONS = 6
+   integer, parameter :: MXDIM = 26
    real(dp), parameter :: ALPHA = 1.5d0
    real(dp), parameter :: TINY = 1d-10
 !     logical :: stratified_sampling = .false., &
@@ -17,16 +19,19 @@ module vegas_mod
       real(dp) :: sigma
       real(dp) :: weight
       real(dp) :: integral
+      real(dp) :: chi2
    end type resultado
-
    type(resultado), allocatable, dimension(:) :: resultados
-
+   
    contains
 
-      subroutine vegas(f_integrand, n_dim, n_iter, n_events, final_result, sigma)
+      subroutine vegas(f_integrand, n_dim, n_iter, n_events, final_result, sigma, chi2, &
+           sigR, sigS, sigV, sigT, sigVV, sigU )
+         
          real(dp), external :: f_integrand
          integer, intent(in) :: n_dim, n_events, n_iter
-         real(dp), intent(out) :: final_result, sigma
+         real(dp), intent(out) :: final_result, sigma, chi2
+         real(dp), external, optional :: sigR, sigS, sigV, sigT, sigVV, sigU
 
          integer :: i, j, k
          real(dp) :: tmp, error_tmp, res, res_sq, xjac, wgt, xwgt
@@ -73,7 +78,12 @@ module vegas_mod
                !>
                !> Call integrand
                !> 
-               tmp = xwgt*f_integrand(x, n_dim)
+               if (present(sigR)) then
+                  tmp = xwgt*f_integrand(x, n_dim, sigR, sigS, sigV, sigT, sigVV, sigU)
+               else
+                  tmp = xwgt*f_integrand(x, n_dim)
+               endif
+
                !> 
                !> For each event we need to store both f and f^2
                !> since the variance of a MC integation is S = (\int f^2) - (\int f)^2
@@ -103,7 +113,7 @@ module vegas_mod
             if (error_tmp < 0d0) then
                error_tmp = 1d-10
             else
-               error_tmp = error_tmp/(n_events-1d0)
+               error_tmp = error_tmp/dsqrt(n_events-1d0)
             endif
             !>
             !> Save the results to the resultados(:) array
@@ -112,19 +122,43 @@ module vegas_mod
             resultados(k)%weight = 1d0/error_tmp**2
             resultados(k)%integral = res
             write(*,200) k, res, error_tmp
-            call get_final_results(final_result, sigma)
-            write(*,201) final_result, sigma
+
+            call get_final_results(k, final_result, sigma, chi2)
+            write(*,201) final_result, sigma, chi2
+
          enddo
+
+         ! Clean before exit
+         deallocate(resultados)
 
          ! Formateo del output
       200   FORMAT('Iteration no: ', I5, ' Integral = ', g14.7, ' +/- ', g9.2)
-      201   FORMAT('     > > > > Total result: ', g14.7, ' +/- ', g9.2)
+      201   FORMAT('     > > > > Total result: ', g14.7, ' +/- ', g9.2, ' chi2: ', g9.2)
 
       end subroutine vegas
 
-      subroutine get_final_results(final_result, sigma)
-         real(dp), intent(out) :: final_result, sigma
-         real(dp) :: weight_sum
+      subroutine vegasnr(region, ndim, fxn, init, ncall, itmx, nprn, tgral, sd, &
+            chi2a, sigR, sigS, sigV, sigT, sigVV, sigU)
+         integer, dimension(2*mxdim), intent(in) :: region
+         integer, intent(in) :: ndim, init, ncall, itmx, nprn
+         real(dp), intent(out) :: tgral, sd, chi2a
+         real(dp), external :: fxn
+         real(dp), external :: sigR, sigS, sigV, sigT, sigVV, sigU
+         !>
+         !> Wrapper for programs that call the old version of vegas
+         !> It uses the same argument names as the old version
+         !>
+
+         print *, init, nprn, region(1)
+
+         call vegas(fxn, ndim, itmx, ncall, tgral, sd, chi2a, sigR, sigS, sigV, sigT, sigVV, sigU)
+
+      end subroutine vegasnr
+
+      subroutine get_final_results(k_iter, final_result, sigma, chi2)
+         integer, intent(in) :: k_iter
+         real(dp), intent(out) :: final_result, sigma, chi2
+         real(dp) :: weight_sum, aux_result, chi2_sum
 
          !>
          !> Weighted average of final results
@@ -133,8 +167,11 @@ module vegas_mod
          !> 
 
          weight_sum   = sum(resultados(:)%weight)
-         final_result = sum(resultados(:)%integral*resultados(:)%weight)/weight_sum
+         aux_result   = sum(resultados(:)%integral*resultados(:)%weight)
+         final_result = aux_result/weight_sum
          sigma        = dsqrt(1d0/weight_sum)
+         chi2_sum     = sum(resultados(:)%integral**2*resultados(:)%weight)
+         chi2         = max(0d0, (chi2_sum - final_result*aux_result)/(k_iter - 0.99d0))
 
       end subroutine get_final_results
 
@@ -253,10 +290,10 @@ module vegas_mod
          dr = 0
 
          do i = 1, n_divisions-1
-            if (rc > dr) then
-               k = k+1
+            do while (rc > dr) 
+               k = k + 1
                dr = dr + rw(k)
-            endif
+            enddo
 
             if (k > 1) then
                old_xi = subdivisions(k-1)

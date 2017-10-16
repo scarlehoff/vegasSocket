@@ -27,3 +27,26 @@ function strange_test(x, n)
    strange_test = x(1)*Exp(-x(2))*(1d0 - log(x(3)))
 
 end function strange_test
+
+function lepage_test(x, n)
+   implicit none
+   integer, parameter :: dp = kind(1d0)
+   real(dp), parameter :: pi = 3.141592653589793238d0
+   real(dp) :: lepage_test
+   integer, intent(in) :: n
+   real(dp), dimension(n), intent(in) :: x
+
+   real(dp) :: a, pref, coef
+   integer :: i
+
+   a = 0.1d0
+   pref = (1d0/a/dsqrt(pi))**n
+   coef = 0d0
+   do i = 1, n
+      coef = coef + (x(i) - 1d0/2d0)**2/a**2
+   enddo
+
+   lepage_test = pref*exp(-coef)
+
+end function lepage_test
+
