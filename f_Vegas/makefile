@@ -3,7 +3,7 @@ LD = gfortran
 EXECUTABLE = run_example
 
 CORE = integrand.f90 main.f90
-MODULES = vegas.f90
+MODULES = Vegas.f90
 
 
 OBJDIR = obj

@@ -1,4 +1,4 @@
-module vegas_mod
+module Vegas_mod
    implicit none
    private
 

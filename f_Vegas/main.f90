@@ -1,5 +1,5 @@
 program vegas_example
-   use vegas_mod, only : vegas
+   use Vegas_mod, only : vegas
    implicit none
    integer, parameter :: dp = kind(1.d0)
    real(dp), external :: test_integrand, strange_test, lepage_test
