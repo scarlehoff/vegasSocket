@@ -34,7 +34,7 @@ int main(int argc, char *argv[]) {
         exit(0);
     }
 
-    // Still not sutre about the role of this part
+    // Still not sure about the role of this part
     struct sockaddr_in serv_addr;
     bzero((char *) &serv_addr, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
