@@ -1,4 +1,7 @@
-module Vegas_mod
+module vegas_mod
+#ifdef USE_NNLOJET
+   use pmap, only: clear_pstore
+#endif
    implicit none
    private
 
@@ -40,18 +43,16 @@ module Vegas_mod
          real(dp), dimension(NDMX) :: rweight
          real(dp), dimension(NDMX, n_dim) :: divisions, div_res, div_res_sq
 
+         print *, "Entering New Vegas"
+
          allocate(resultados(n_iter))
 
-         ! Init < 1
-
-         ! Init < 2
+         ! Initialise variables
          divisions(:,:) = 0d0
          divisions(1,:) = 1d0
          rweight(:) = 1d0
 
-         ! Initialise variables
          
-         ! Init < 3
 
          !>
          !> Initial rebining (ie, all subdivisions are equal)
@@ -60,14 +61,18 @@ module Vegas_mod
             call rebin(1d0/NDMX, NDMX, rweight, divisions(:, j))
          enddo
 
-
          do k = 1, n_iter
+            write(*,'(A,I0)') "Commencing iteration n ", k
             xjac = 1d0/n_events
             res = 0d0
             res_sq = 0d0
             div_res(:,:) = 0d0
             div_res_sq(:,:) = 0d0
 
+#ifdef USE_NNLOJET
+            call init_parallel()
+            print *, "NNLOJET initilisation done"
+#endif
             do i = 1, n_events
                !>
                !> Generate a random vector of n_dim
@@ -79,7 +84,7 @@ module Vegas_mod
                !> Call integrand
                !> 
                if (present(sigR)) then
-                  tmp = xwgt*f_integrand(x, n_dim, sigR, sigS, sigV, sigT, sigVV, sigU)
+                  tmp = xwgt*f_integrand(x, 0d0, n_dim, sigR, sigS, sigV, sigT, sigVV, sigU)
                else
                   tmp = xwgt*f_integrand(x, n_dim)
                endif
@@ -126,6 +131,11 @@ module Vegas_mod
             call get_final_results(k, final_result, sigma, chi2)
             write(*,201) final_result, sigma, chi2
 
+#ifdef USE_NNLOJET
+            call destroy_parallel()
+            call clear_pstore()
+            print *, "NNLOJET finalisation done"
+#endif
          enddo
 
          ! Clean before exit
@@ -139,7 +149,7 @@ module Vegas_mod
 
       subroutine vegasnr(region, ndim, fxn, init, ncall, itmx, nprn, tgral, sd, &
             chi2a, sigR, sigS, sigV, sigT, sigVV, sigU)
-         integer, dimension(2*mxdim), intent(in) :: region
+         real(dp), dimension(2*MXDIM), intent(in) :: region
          integer, intent(in) :: ndim, init, ncall, itmx, nprn
          real(dp), intent(out) :: tgral, sd, chi2a
          real(dp), external :: fxn
@@ -149,7 +159,8 @@ module Vegas_mod
          !> It uses the same argument names as the old version
          !>
 
-         print *, init, nprn, region(1)
+         print *, "Entering legacy wrapper for New Vegas!"
+         print *, "init, nprn, region(1): ", init, nprn, region(1)
 
          call vegas(fxn, ndim, itmx, ncall, tgral, sd, chi2a, sigR, sigS, sigV, sigT, sigVV, sigU)
 

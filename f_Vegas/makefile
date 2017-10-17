@@ -11,7 +11,7 @@ MODDIR = mod
 OBJFILES = $(addprefix $(OBJDIR)/, $(patsubst %.f90,%.o, $(CORE)))
 MODFILES = $(addprefix $(MODDIR)/, $(patsubst %.f90,%.o, $(MODULES)))
 
-FFLAGS = -Wall -O0 -g -fno-automatic -fbounds-check -J $(OBJDIR)
+FFLAGS = -Wall -Og -g -cpp -fno-automatic -fbounds-check -J $(OBJDIR)
 LDFLAGS = -lgfortran
 
 .PHONY: all clean dirs
