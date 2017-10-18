@@ -14,6 +14,7 @@ from src import vegas_socket
 
 HOST = ""
 PORT = 8888
+n_clients = 2
 
 # Open the server, bind it to HOST:PORT and wait for a connection
 # (for instance c_example)
@@ -27,9 +28,10 @@ else:
     host_str = HOST
 
 print("Server up. Connect to " + host_str + ":" + str(PORT))
+print("Waiting for " + str(n_clients) + " clients")
 
-for i in range(10):
-    success = server.harmonize_integral(2, verbose = True)
+while True:
+    success = server.harmonize_integral(n_clients, verbose = True)
 
 if success < 0:
     print("Something went wrong")

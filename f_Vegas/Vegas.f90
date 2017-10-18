@@ -64,8 +64,8 @@ module vegas_mod
          integer, dimension(n_dim) :: div_index
          real(dp), dimension(n_dim) :: x
          real(dp), dimension(NDMX) :: rweight
-         real(dp), dimension(3, NDMX, n_dim), target :: grid_data
          real(dp), dimension(NDMX, n_dim) :: divisions
+         real(dp), dimension(3, NDMX, n_dim), target :: grid_data
          real(dp), pointer :: res, res_sq
          real(dp), dimension(:,:), pointer :: div_res, div_res_sq
 
@@ -117,13 +117,13 @@ module vegas_mod
             call init_parallel()
             print *, "NNLOJET initilisation done"
 #endif
-            do i = 1, n_events_final
+            do i = 1, n_events
                !>
                !> Generate a random vector of n_dim
                ! 
                call generate_random_array(n_dim, NDMX, divisions, div_index, x, wgt)
                xwgt = xjac * wgt
-               if (i < n_events_initial) then
+               if ((i < n_events_initial).or.(i > n_events_final)) then
                   cycle
                endif
 
@@ -159,6 +159,7 @@ module vegas_mod
             !>
             if (parallel_warmup) then
                print *, "Communicating with server"
+               print *, "Partial total result: ", res*n_sockets
                call socket_exchange(grid_data, size(grid_data)*dp, hostname, port, ifail)
                if (ifail == 0) then
                   print *, "Success communicating with server"
@@ -167,6 +168,7 @@ module vegas_mod
                endif
             endif
 #endif
+
 
             !>
             !> And refine the grid for the next iteration
