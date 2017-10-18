@@ -5,7 +5,13 @@ Receives a double and sends 2*double
 """
 
 import socket
-import vegas_socket
+
+import sys
+sys.path.append('..')
+sys.path.append('.')
+from src import vegas_socket
+
+
 
 HOST = ""
 PORT = 8888
