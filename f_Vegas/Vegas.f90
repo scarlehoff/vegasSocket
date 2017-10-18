@@ -5,9 +5,14 @@ module vegas_mod
    implicit none
    private
 
-   public :: vegas, vegasnr
+   public :: vegas, vegasnr, activate_parallel_sockets
 
    integer, parameter :: dp = kind(1.d0)
+#ifdef USE_SOCKETS
+   character(len=9) :: hostname = "localhost"
+   integer :: port = 8888
+   integer :: ifail = 0
+#endif
 
    ! Parameters
    integer, parameter :: NDMX = 10
@@ -25,8 +30,26 @@ module vegas_mod
       real(dp) :: chi2
    end type resultado
    type(resultado), allocatable, dimension(:) :: resultados
+
+   logical :: parallel_warmup = .false.
+   integer :: n_events_initial, n_events_final
+   integer :: n_sockets, socket_number
    
    contains
+      subroutine activate_parallel_sockets(n_sockets_in, socket_number_in)
+         !>
+         !> Store the total number of sockets
+         !> And the socket number of that corresponds to this instance of Vegas
+         !> 
+         integer, intent(in) :: n_sockets_in, socket_number_in
+         n_sockets = n_sockets_in
+         socket_number = socket_number_in
+         if (n_sockets > 1) then
+            parallel_warmup = .true.
+         else
+            parallel_warmup = .false.
+         endif
+      end subroutine
 
       subroutine vegas(f_integrand, n_dim, n_iter, n_events, final_result, sigma, chi2, &
            sigR, sigS, sigV, sigT, sigVV, sigU )
@@ -36,12 +59,21 @@ module vegas_mod
          real(dp), intent(out) :: final_result, sigma, chi2
          real(dp), external, optional :: sigR, sigS, sigV, sigT, sigVV, sigU
 
-         integer :: i, j, k
-         real(dp) :: tmp, error_tmp, res, res_sq, xjac, wgt, xwgt
+         integer :: i, j, k, n_events_per_instance
+         real(dp) :: tmp, error_tmp, xjac, wgt, xwgt
          integer, dimension(n_dim) :: div_index
          real(dp), dimension(n_dim) :: x
          real(dp), dimension(NDMX) :: rweight
-         real(dp), dimension(NDMX, n_dim) :: divisions, div_res, div_res_sq
+         real(dp), dimension(3, NDMX, n_dim), target :: grid_data
+         real(dp), dimension(NDMX, n_dim) :: divisions
+         real(dp), pointer :: res, res_sq
+         real(dp), dimension(:,:), pointer :: div_res, div_res_sq
+
+         grid_data(:,:,:) = 0d0
+         div_res => grid_data(1,:,:)
+         div_res_sq => grid_data(2,:,:)
+         res => grid_data(3,1,1)
+         res_sq => grid_data(3,2,2)
 
          print *, "Entering New Vegas"
 
@@ -51,8 +83,20 @@ module vegas_mod
          divisions(:,:) = 0d0
          divisions(1,:) = 1d0
          rweight(:) = 1d0
+         call srand(1)
 
-         
+         if (parallel_warmup) then
+            n_events_per_instance = n_events/n_sockets
+            n_events_initial = 1 + n_events_per_instance*(socket_number-1)
+            n_events_final = socket_number*n_events_per_instance
+            print *, " > > > Vegas instance No: ", socket_number, " of ", n_sockets
+            print *, " > > > Running for ", n_events_per_instance, "events"
+            print *, " > > > From: ", n_events_initial
+            print *, " > > > To: ", n_events_final
+         else
+            n_events_initial = 1
+            n_events_final = n_events
+         endif
 
          !>
          !> Initial rebining (ie, all subdivisions are equal)
@@ -73,12 +117,15 @@ module vegas_mod
             call init_parallel()
             print *, "NNLOJET initilisation done"
 #endif
-            do i = 1, n_events
+            do i = 1, n_events_final
                !>
                !> Generate a random vector of n_dim
-               !> 
+               ! 
                call generate_random_array(n_dim, NDMX, divisions, div_index, x, wgt)
                xwgt = xjac * wgt
+               if (i < n_events_initial) then
+                  cycle
+               endif
 
                !>
                !> Call integrand
@@ -104,6 +151,23 @@ module vegas_mod
                   div_res_sq(div_index(j), j) = div_res_sq(div_index(j), j) + tmp**2
                enddo
             enddo
+
+#ifdef USE_SOCKETS
+            !>
+            !> If we are using sockets, send the value of the integral
+            !> for each subdivision to the server and wait for a response
+            !>
+            if (parallel_warmup) then
+               print *, "Communicating with server"
+               call socket_exchange(grid_data, size(grid_data)*dp, hostname, port, ifail)
+               if (ifail == 0) then
+                  print *, "Success communicating with server"
+               else
+                  print *, "Server communication failed"
+               endif
+            endif
+#endif
+
             !>
             !> And refine the grid for the next iteration
             !> 
@@ -216,7 +280,7 @@ module vegas_mod
             !> Get a random number randomly asigned to one
             !> of the subdivisions
             !> 
-            call random_number(rn)
+            rn = rand()
             x_n = 1d0 + n_divisions*(dble(kg) - rn)
             int_xn = max(1, min(int(x_n), n_divisions)) ! In practice int_xn = int(x_n) unless x_n < 1
             aux_rand = x_n - int_xn ! which is not the same as fraction(x_n), aux_rand can go negative if int_xn = 1
@@ -247,7 +311,6 @@ module vegas_mod
          real(dp), dimension(n_divisions) :: rw
          integer :: i, j
          real(dp) :: rc
-
          !>
          !> First we smear out the array div_sq, where we have store
          !> the value of f^2 for each sub_division for each dimension

@@ -12,7 +12,6 @@ sys.path.append('.')
 from src import vegas_socket
 
 
-
 HOST = ""
 PORT = 8888
 
@@ -29,7 +28,8 @@ else:
 
 print("Server up. Connect to " + host_str + ":" + str(PORT))
 
-success = server.harmonize_integral(2, verbose = True)
+for i in range(10):
+    success = server.harmonize_integral(2, verbose = True)
 
 if success < 0:
     print("Something went wrong")
