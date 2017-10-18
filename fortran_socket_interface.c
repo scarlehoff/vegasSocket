@@ -38,8 +38,26 @@ void socket_exchange_(unsigned char *data, int *len, char *host, int *port, int 
         exit(1);
     }
 
-    int n = write(sockfd, data, *len);
+    int n;
 
+    /*
+     * Tell the server the length of the data it has to expect
+     */
+    union {
+       int size;
+       unsigned char bytes[4];
+    } array_info;
+    array_info.size = *len;
+    n = write(sockfd, array_info.bytes, 4);
+
+    /*
+     * Send the information to the server
+     */
+    n = write(sockfd, data, *len);
+
+    /*
+     * Wait for the new batch of information
+     */
     n = read(sockfd, data, *len);
 
     if (n < 0) {

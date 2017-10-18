@@ -9,6 +9,7 @@ class Generic_Socket:
     """
 
     def __init__(self, sock=None, address=2*["UNK"]):
+        self.double_size = 8
         """Create a IPv4 TCP socket
         """
         if sock is None:
@@ -47,14 +48,15 @@ class Generic_Socket:
         data_str = data.decode().strip()
         return data_str
 
-    def receive_data(self, msg_len = 32):
+    def receive_data(self, msg_len = 32, verbose=None):
         """ Receive any kind of binary data until it fullfills msg_len bytes off data
         Returns binary data received
         """
         chunks = []
         bytes_received = 0
         while bytes_received < msg_len:
-            print("Waiting for a connection")
+            if verbose:
+                print("Waiting for a connection")
             chunk = self.sock.recv(min(msg_len - bytes_received, 2048))
             if chunk == b'': 
                 raise RuntimeError("socket connection broken")
@@ -102,37 +104,77 @@ class Vegas_Socket(Generic_Socket):
         s = struct.pack('d'*arr_len, double_array)
         return s
 
-    def read_partial_integral(self):
+    def read_partial_integral(self, size = 8, verbose = None):
         """ Read the total integral from one of the jobs
         and returns a double
         """
-        data = self.receive_data(8)
-        double = self.bytes_to_double(data)
-        return double
+        data = self.receive_data(size, verbose = verbose)
+        double_array = []
+        for i in range(0, size-1, self.double_size):
+            double_array.append(self.bytes_to_double(data[i:i+8]))
+        return double_array
 
     def send_total_integral(self, total):
         """ Sends the total sum to a job
         """
-        data = self.double_to_bytes(total)
-        self.send_data(data)
+        data = []
+        for double in total:
+            data.append(self.double_to_bytes(double))
+        self.send_data(b''.join(data))
+
+    def get_size(self):
+        """ Gets the size of the data we are going to receive
+        ie, gets an integer (size = 4 bytes)
+        """
+        data = self.receive_data(4)
+        return int.from_bytes(data, byteorder="little")
 
     def harmonize_integral(self, n_jobs, verbose = None):
         """ Get the partial vegas integrals from the different n_jobs
         and send the sum back to each and every job.
         Only exits with success once all jobs receive their data
         """
-        job_socket = self.wait_for_client()
+        # Connect to the endpoint
+        job_sockets = []
+        array_partial = []
+        while len(job_sockets) < n_jobs:
+            new_endpoint = self.wait_for_client()
+
+            if verbose:
+                adr = str(new_endpoint.address[0])
+                prt = str(new_endpoint.address[1])
+                print("New endpoint connected: %s:%s" % (adr, prt))
+        
+            # Get the size of the array of doubles we are going to receive
+            size = new_endpoint.get_size()
+            doubles = int(size / 8)
+            if verbose:
+                print("Size of array: " + str(size))
+                print("Meaning we will get " + str(doubles) + " doubles")
+
+            # Get the actual array of data
+            partial_value = new_endpoint.read_partial_integral(size, verbose = verbose)
+            if verbose:
+                print("Partial value obtained: " + str(partial_value))
+
+
+            # Store the socket and the array we just received, we will use it in the future
+            array_partial.append(partial_value)
+            job_sockets.append(new_endpoint)
+
+        integral_value = doubles*[0.0]
+        for array_values in array_partial:
+            if len(array_values) != doubles:
+                raise Exception("Received arrays of different length!")
+            integral_value = list(map(lambda x,y: x+y, integral_value, array_values))
+
         if verbose:
-            adr = str(job_socket.address[0])
-            prt = str(job_socket.address[1])
-            print("Job_socket connected: %s:%s" % (adr, prt))
-        partial_value = job_socket.read_partial_integral()
-        if verbose:
-            print("Partial value obtained: " + str(partial_value))
-        integral_value = float(n_jobs)*partial_value
-        print("Total value of the integral received: " + str(integral_value))
-        print("Sending it back to all clients")
-        job_socket.send_total_integral(integral_value)
+            print("Total value of the integral received: " + str(integral_value))
+            print("Sending it back to all clients")
+        while job_sockets:
+            job_socket = job_sockets.pop()
+            job_socket.send_total_integral(integral_value)
+
         return 0
         
         

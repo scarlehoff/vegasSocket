@@ -48,6 +48,19 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
+    int n;
+
+    /*
+     * Now let's tell the server we are only going to send one double
+     * ie: size of array = 8 bytes
+     */
+    union {
+       int size;
+       unsigned char bytes[4];
+    } array_info;
+    array_info.size = 8; 
+    n = write(sockfd, array_info.bytes, 4);
+
     printf("Please enter the double you want to send: ");
     char buffer[256];
     bzero(buffer, 256);
@@ -61,7 +74,7 @@ int main(int argc, char *argv[]) {
     printf("You entered: %f\n", d_input.d);
 
     // Send message (buffer) to server sockfd of length strlen(buffer)
-    int n = write(sockfd, d_input.bytes, strlen(d_input.bytes));
+    n = write(sockfd, d_input.bytes, strlen(d_input.bytes));
 
     /* Now read server response */
     n = read(sockfd, d_output.bytes, 8);
