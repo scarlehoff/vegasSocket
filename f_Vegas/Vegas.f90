@@ -10,8 +10,8 @@ module vegas_mod
 
    integer, parameter :: dp = kind(1.d0)
 #ifdef USE_SOCKETS
-   character(len=9) :: hostname = "localhost"
-   integer :: port = 8888
+   character(len=10), parameter :: hostname = "localhost" // char(0)
+   integer, parameter :: port = 8888
    integer :: ifail = 0
 #endif
 
@@ -33,9 +33,11 @@ module vegas_mod
    type(resultado), allocatable, dimension(:) :: resultados
 
    logical :: parallel_warmup = .false.
+   logical :: warmup_flag = .true.
    integer :: n_events_initial, n_events_final
    integer :: n_sockets, socket_number
-   
+
+
    contains
       subroutine activate_parallel_sockets(n_sockets_in, socket_number_in)
          !>
@@ -70,6 +72,22 @@ module vegas_mod
          real(dp), pointer :: res, res_sq
          real(dp), dimension(:,:), pointer :: div_res, div_res_sq
 
+#ifdef USE_NNLOJET
+         real(dp) :: amz, zewfac, zewnull
+         real(dp) :: amzW, stw, ewfac
+         real(dp) :: rma2, rmb2, rm2, shat
+         integer :: iproc
+         common /eweakZ/amz,zewfac(4),zewnull(4)
+         !$omp threadprivate(/eweakZ/)
+         common /eweakW/amzW,stw,ewfac
+         !$omp threadprivate(/eweakW/)
+         common /pmasses/rma2,rmb2,rm2(1:7),shat
+         !$omp threadprivate(/pmasses/)
+         common /currentprocess/iproc
+         !$omp threadprivate(/currentprocess/)
+#endif 
+   
+
          grid_data(:,:,:) = 0d0
          div_res => grid_data(1,:,:)
          div_res_sq => grid_data(2,:,:)
@@ -90,10 +108,10 @@ module vegas_mod
             n_events_per_instance = n_events/n_sockets
             n_events_initial = 1 + n_events_per_instance*(socket_number-1)
             n_events_final = socket_number*n_events_per_instance
-            print *, " > > > Vegas instance No: ", socket_number, " of ", n_sockets
-            print *, " > > > Running for ", n_events_per_instance, "events"
-            print *, " > > > From: ", n_events_initial
-            print *, " > > > To: ", n_events_final
+            write(*,'(A,I0,A,I0)') " > > > Vegas instance No: ", socket_number, " of ", n_sockets
+            write(*,'(A,I0,A)') " > > > Running for ", n_events_per_instance, "events"
+            write(*,'(A,I0)') " > > > From: ", n_events_initial
+            write(*,'(A,I0)') " > > > To: ", n_events_final
          else
             n_events_initial = 1
             n_events_final = n_events
@@ -110,18 +128,40 @@ module vegas_mod
             call rebin(1d0/NDMX, NDMX, rweight, divisions(:, j))
          enddo
 
+         xjac = 1d0/n_events
          do k = 1, n_iter
             write(*,'(A,I0)') "Commencing iteration n ", k
             grid_data(:,:,:) = 0d0
-            xjac = 1d0/n_events
 
-            !$omp parallel private(xwgt,wgt,x,div_index,tmp) shared(divisions, grid_data)
-#ifdef USE_NNLOJET
-            call init_parallel()
-            print *, "NNLOJET initilisation done"
+#ifdef USE_SOCKETS
+            if(parallel_warmup) then
+               print *, "Sockets are active"
+               !>
+               !> Rewind the random number sequence
+               !> 
+               call roll_random(1, n_events_initial - 1)
+               if (k > 1) then
+                  call roll_random(n_events_final + 1, n_events)
+               endif
+            endif
 #endif
-            !$omp do
-            do i = 1, n_events
+
+#ifdef USE_NNLOJET
+            !$omp parallel default(private) shared(divisions, grid_data) &
+            !$omp& shared(n_dim, n_events_initial, n_events_final, xjac, warmup_flag) &
+            !$omp& shared(parallel_warmup, n_sockets) &
+            !$omp& shared(res, res_sq, div_res, div_res_sq) &
+            !$omp& copyin(/eweakZ/,/eweakW/,/pmasses/,/currentprocess/)
+            call init_parallel()
+            !$omp single
+            print *, "NNLOJET initilisation done"
+            !$omp end single
+#else
+            !$omp parallel private(xwgt,wgt,x,div_index,tmp) shared(divisions, grid_data)
+#endif
+
+            !$omp do reduction(+:grid_data)
+            do i = n_events_initial, n_events_final
                !>
                !> Generate a random vector of n_dim
                !> TODO: It needs to be omp critical otherwise the program slows down in kernel calls at this point
@@ -131,15 +171,12 @@ module vegas_mod
                call generate_random_array(n_dim, NDMX, divisions, div_index, x, wgt)
                !$omp end critical
                xwgt = xjac * wgt
-               if ((i < n_events_initial).or.(i > n_events_final)) then
-                  cycle
-               endif
 
                !>
                !> Call integrand
                !> 
                if (present(sigR)) then
-                  tmp = xwgt*f_integrand(x, 0d0, n_dim, sigR, sigS, sigV, sigT, sigVV, sigU)
+                  tmp = xwgt*f_integrand(x, 0d0, xwgt, sigR, sigS, sigV, sigT, sigVV, sigU)
                else
                   tmp = xwgt*f_integrand(x, n_dim)
                endif
@@ -148,21 +185,27 @@ module vegas_mod
                !> For each event we need to store both f and f^2
                !> since the variance of a MC integation is S = (\int f^2) - (\int f)^2
                !>
-               !$omp critical
                res = res + tmp
                res_sq = res_sq + tmp**2
                !>
                !> We also need to store the value of the integral for each subdivision of the 
                !> integration region
                !>
-               do j = 1, n_dim
-!                    div_res(div_index(j), j) = div_res(div_index(j),j) + tmp
-                  div_res_sq(div_index(j), j) = div_res_sq(div_index(j), j) + tmp**2
-               enddo
-               !$omp end critical
+               if (warmup_flag) then
+                  do j = 1, n_dim
+!                       div_res(div_index(j), j) = div_res(div_index(j),j) + tmp
+                     div_res_sq(div_index(j), j) = div_res_sq(div_index(j), j) + tmp**2
+                  enddo
+               endif
             enddo
             !$omp end do
 
+            !>
+            !> In principle, "end do" implies synchronisation, however 
+            !> during debugging it was not clear that all threads were 
+            !> finished with the loop at this point
+            !>
+            !$omp barrier
 #ifdef USE_SOCKETS
             !$omp master
             !>
@@ -170,8 +213,7 @@ module vegas_mod
             !> for each subdivision to the server and wait for a response
             !>
             if (parallel_warmup) then
-               print *, "Communicating with server"
-               print *, "Partial total result: ", res*n_sockets
+               write(*,'(A,A,A,I0)')"Communicating with server at ", hostname, ":", port
                call socket_exchange(grid_data, size(grid_data)*dp, hostname, port, ifail)
                if (ifail == 0) then
                   print *, "Success communicating with server"
@@ -180,17 +222,27 @@ module vegas_mod
                endif
             endif
             !$omp end master
+            !$omp barrier
 #endif
-
 
             !>
             !> And refine the grid for the next iteration
             !> 
-            !$omp do
-            do j = 1, n_dim
-               call refine_grid(NDMX, div_res_sq(:,j), divisions(:,j))
-            enddo
-            !$omp end do
+            if(warmup_flag) then
+               !$omp do
+               do j = 1, n_dim
+                  call refine_grid(NDMX, div_res_sq(:,j), divisions(:,j))
+               enddo
+               !$omp end do
+            endif
+
+#ifdef USE_NNLOJET
+            call destroy_parallel()
+            call clear_pstore()
+            !$omp single
+            print *, "NNLOJET finalisation done"
+            !$omp end single
+#endif
 
             !$omp end parallel
             !>
@@ -215,11 +267,6 @@ module vegas_mod
             call get_final_results(k, final_result, sigma, chi2)
             write(*,201) final_result, sigma, chi2
 
-#ifdef USE_NNLOJET
-            call destroy_parallel()
-            call clear_pstore()
-            print *, "NNLOJET finalisation done"
-#endif
          enddo
 
          ! Clean before exit
@@ -285,7 +332,7 @@ module vegas_mod
          real(dp), intent(out), dimension(n_dim) :: x
          real(dp), intent(out) :: wgt
          integer, parameter :: kg = 1 ! Using this a parameter at the moment to make the notation compatible with vegas
-         integer :: i, int_xn
+         integer :: j, int_xn
          real(dp) :: rn, aux_rand, x_n, rand_x, xdelta, x_ini
 
          !>
@@ -295,28 +342,32 @@ module vegas_mod
 
          wgt = 1d0
 
-         do i = 1, n_dim
+         do j = 1, n_dim
             !>
             !> Get a random number randomly asigned to one
             !> of the subdivisions
             !> 
-            rn = rand()
+            rn = internal_rand()
             x_n = 1d0 + n_divisions*(dble(kg) - rn)
             int_xn = max(1, min(int(x_n), n_divisions)) ! In practice int_xn = int(x_n) unless x_n < 1
             aux_rand = x_n - int_xn ! which is not the same as fraction(x_n), aux_rand can go negative if int_xn = 1
             if (int_xn == 1) then
                x_ini = 0d0
             else
-               x_ini = divisions(int_xn - 1, i)
+               x_ini = divisions(int_xn - 1, j)
             endif
-            xdelta = divisions(int_xn, i) - x_ini
+            xdelta = divisions(int_xn, j) - x_ini
             !>
             !> Get the random number from within the subdivision
             !> 
             rand_x = x_ini + xdelta*aux_rand
-            x(i) = reg_i + rand_x*(reg_f - reg_i) ! x(i) = rand_x
+            x(j) = reg_i + rand_x*(reg_f - reg_i) ! x(i) = rand_x
             wgt = wgt * xdelta * n_divisions
-            div_index(i) = int_xn
+            div_index(j) = int_xn
+            if ((x(j) == 0d0).or.(x(j) == 1d0)) then
+               print *, "Weird", j
+               print *, rn
+            endif
          enddo
 
 
@@ -395,8 +446,22 @@ module vegas_mod
          enddo
 
          subdivisions(1:n_divisions-1) = aux(1:n_divisions-1)
-         subdivisions(n_divisions) = 1d0
-
+         subdivisions(n_divisions) = 1d0-1d-10
       end subroutine rebin
+
+      real(dp) function internal_rand()
+         internal_rand = rand()
+      end function
+
+#ifdef USE_SOCKETS
+      subroutine roll_random(ini, fin)
+         integer, intent(in) :: ini, fin
+         integer :: i
+         real(dp) :: tmp
+         do i = ini, fin
+            tmp = internal_rand()
+         enddo
+      end subroutine roll_random
+#endif
 
 end module vegas_mod

@@ -14,6 +14,8 @@ void socket_exchange_(unsigned char *data, int *len, char *host, int *port, int 
      */
     *ifail = 1;
 
+    printf("Connecting to: '%s'\n", host);
+
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
         perror("Error opening socket");
