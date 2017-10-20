@@ -2,6 +2,7 @@ module vegas_mod
 #ifdef USE_NNLOJET
    use pmap, only: clear_pstore
 #endif
+!$ use omp_lib
    implicit none
    private
 
@@ -98,6 +99,10 @@ module vegas_mod
             n_events_final = n_events
          endif
 
+         !$ print *, " $ OMP active"
+         !$ print *, " $ Maximum number of threads: ", OMP_get_num_procs()
+         !$ print *, " $ Number of threads selected: ", OMP_get_max_threads()
+
          !>
          !> Initial rebining (ie, all subdivisions are equal)
          !>
@@ -107,21 +112,24 @@ module vegas_mod
 
          do k = 1, n_iter
             write(*,'(A,I0)') "Commencing iteration n ", k
+            grid_data(:,:,:) = 0d0
             xjac = 1d0/n_events
-            res = 0d0
-            res_sq = 0d0
-            div_res(:,:) = 0d0
-            div_res_sq(:,:) = 0d0
 
+            !$omp parallel private(xwgt,wgt,x,div_index,tmp) shared(divisions, grid_data)
 #ifdef USE_NNLOJET
             call init_parallel()
             print *, "NNLOJET initilisation done"
 #endif
+            !$omp do
             do i = 1, n_events
                !>
                !> Generate a random vector of n_dim
-               ! 
+               !> TODO: It needs to be omp critical otherwise the program slows down in kernel calls at this point
+               !> maybe rand() is at fault? investigate
+               !>
+               !$omp critical
                call generate_random_array(n_dim, NDMX, divisions, div_index, x, wgt)
+               !$omp end critical
                xwgt = xjac * wgt
                if ((i < n_events_initial).or.(i > n_events_final)) then
                   cycle
@@ -140,6 +148,7 @@ module vegas_mod
                !> For each event we need to store both f and f^2
                !> since the variance of a MC integation is S = (\int f^2) - (\int f)^2
                !>
+               !$omp critical
                res = res + tmp
                res_sq = res_sq + tmp**2
                !>
@@ -150,9 +159,12 @@ module vegas_mod
 !                    div_res(div_index(j), j) = div_res(div_index(j),j) + tmp
                   div_res_sq(div_index(j), j) = div_res_sq(div_index(j), j) + tmp**2
                enddo
+               !$omp end critical
             enddo
+            !$omp end do
 
 #ifdef USE_SOCKETS
+            !$omp master
             !>
             !> If we are using sockets, send the value of the integral
             !> for each subdivision to the server and wait for a response
@@ -167,14 +179,20 @@ module vegas_mod
                   print *, "Server communication failed"
                endif
             endif
+            !$omp end master
 #endif
 
 
             !>
             !> And refine the grid for the next iteration
             !> 
-            call refine_grid(n_dim, NDMX, div_res_sq, divisions)
+            !$omp do
+            do j = 1, n_dim
+               call refine_grid(NDMX, div_res_sq(:,j), divisions(:,j))
+            enddo
+            !$omp end do
 
+            !$omp end parallel
             !>
             !> Treat the final results
             !> Compute the error
@@ -304,45 +322,39 @@ module vegas_mod
 
       end subroutine generate_random_array
 
-      subroutine refine_grid(n_dim, n_divisions, div_sq, divisions)
-         integer, intent(in) :: n_dim, n_divisions
-         real(dp), dimension(n_divisions, n_dim), intent(in) :: div_sq
-         real(dp), dimension(n_divisions, n_dim), intent(inout) :: divisions
-         real(dp), dimension(n_divisions, n_dim) :: aux
-         real(dp), dimension(n_dim) :: aux_sum
-         real(dp), dimension(n_divisions) :: rw
-         integer :: i, j
-         real(dp) :: rc
+      subroutine refine_grid(n_divisions, div_sq, divisions)
+         integer, intent(in) :: n_divisions
+         real(dp), dimension(n_divisions), intent(in) :: div_sq
+         real(dp), dimension(n_divisions), intent(inout) :: divisions
+         real(dp), dimension(n_divisions) :: aux, rw
+         integer :: i
+         real(dp) :: rc, aux_sum
+         rc = 0d0
          !>
          !> First we smear out the array div_sq, where we have store
          !> the value of f^2 for each sub_division for each dimension
          !>
-         do j = 1, n_dim
-            aux(1,j) = (div_sq(1,j) + div_sq(2,j))/2d0
-            aux_sum(j) = aux(1,j)
-            do i = 2, n_divisions - 1
-               aux(i,j) = (div_sq(i-1,j) + div_sq(i,j) + div_sq(i+1,j))/3d0
-               aux_sum(j) = aux_sum(j) + aux(i,j)
-            enddo
-            aux(n_divisions,j) = (div_sq(n_divisions-1,j) + div_sq(n_divisions,j))/2d0
-            aux_sum(j) = aux_sum(j) + aux(n_divisions,j)
+         aux(1) = (div_sq(1) + div_sq(2))/2d0
+         aux_sum = aux(1)
+         do i = 2, n_divisions - 1
+            aux(i) = (div_sq(i-1) + div_sq(i) + div_sq(i+1))/3d0
+            aux_sum = aux_sum + aux(i)
          enddo
+         aux(n_divisions) = (div_sq(n_divisions-1) + div_sq(n_divisions))/2d0
+         aux_sum = aux_sum + aux(n_divisions)
 
          !>
          !> Now we refine the grid according to 
          !> journal of comp phys, 27, 192-203 (1978) G.P. Lepage
          !>
-         do j = 1, n_dim
-            rc = 0d0
-            do i = 1, n_divisions
-               if (aux(i,j) < TINY) then
-                  aux(i,j) = TINY
-               endif
-               rw(i) = ( (1d0 - aux(i,j)/aux_sum(j))/(dlog(aux_sum(j)) - dlog(aux(i,j))) )**ALPHA
-               rc = rc + rw(i)
-            enddo
-            call rebin(rc/n_divisions, n_divisions, rw, divisions(:,j))
+         do i = 1, n_divisions
+            if (aux(i) < TINY) then
+               aux(i) = TINY
+            endif
+            rw(i) = ( (1d0 - aux(i)/aux_sum)/(dlog(aux_sum) - dlog(aux(i))) )**ALPHA
+            rc = rc + rw(i)
          enddo
+         call rebin(rc/n_divisions, n_divisions, rw, divisions)
 
       end subroutine refine_grid
 

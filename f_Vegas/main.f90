@@ -21,13 +21,9 @@ program vegas_example
    call activate_parallel_sockets(n_sockets, socket_number)
 #endif
 
-   print *, "Start of the program"
-
-   print *, "Computing integral..."
    n_dim = 9
    n_iter = 10
-   n_events = 1d7
-
+   n_events = 1d6
 
    call vegas(lepage_test, n_dim, n_iter, n_events, res, sigma, chi2)
 
