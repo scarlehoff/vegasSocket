@@ -1,7 +1,7 @@
 program example
    implicit none
    integer, parameter :: dp = selected_real_kind(14)
-   character(len=32) :: hostname = "localhost"
+   character(len=32) :: hostname = "localhost" // char(0)
    integer :: port = 8888
    integer :: seed  = 1
    character(len=32) :: arg
@@ -39,7 +39,7 @@ program example
 
    a_double_sanity = a_double
 
-   call socket_exchange(a_double, size(a_double)*dp, trim(hostname), port, ifail)
+   call socket_exchange(a_double, size(a_double)*dp, hostname, port, ifail)
 
    print *, "And the socket returned: "
    print *, a_double(:,1)
