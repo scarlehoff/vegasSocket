@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 """Example python server for the Vegas warmup cheat
 Receives a double and sends 2*double

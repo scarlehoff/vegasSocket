@@ -53,7 +53,7 @@ module vegas_mod
          else
             parallel_warmup = .false.
          endif
-         
+        
          if (present(hostname_in)) then
             hostname = trim(hostname_in) // char(0)
          else
@@ -128,7 +128,7 @@ module vegas_mod
          divisions(:,:) = 0d0
          divisions(1,:) = 1d0
          rweight(:) = 1d0
-         call srand(1)
+         call seed_rand(1)
 
          if (parallel_warmup) then
             n_events_per_instance = n_events/n_sockets
@@ -180,7 +180,7 @@ module vegas_mod
 #ifdef USE_NNLOJET
             !$omp parallel default(private) shared(divisions, grid_data) &
             !$omp& shared(n_dim, n_events_initial, n_events_final, xjac, warmup_flag) &
-            !$omp& shared(parallel_warmup, n_sockets) &
+            !$omp& shared(parallel_warmup, n_sockets, hostname, port) &
             !$omp& shared(res, res_sq, div_res, div_res_sq) &
             !$omp& copyin(/eweakZ/,/eweakW/,/pmasses/,/currentprocess/)
             call init_parallel()
@@ -523,10 +523,26 @@ module vegas_mod
          close(11)
       end subroutine read_grid_up
 
+      subroutine seed_rand(seed)
+         integer, intent(in) :: seed
+         !>
+         !> Wrapper for srand
+         !>
+#ifndef USE_NNLOJET
+         call srand(seed)
+#endif
+      end subroutine seed_rand
 
       real(dp) function internal_rand()
+         !>
+         !> Wrapper for the generation of random variables
+         !>
+#ifdef USE_NNLOJET
+         internal_rand = rn()
+#else
          internal_rand = rand()
-      end function
+#endif
+      end function internal_rand
 
 #ifdef USE_SOCKETS
       subroutine roll_random(ini, fin)
