@@ -79,8 +79,16 @@ module vegas_mod
          real(dp) :: amz, zewfac, zewnull
          real(dp) :: amzW, stw, ewfac
          real(dp) :: rma2, rmb2, rm2, shat
+         integer :: veg_iave, veg_it
+         real(dp) :: veg_wgt, veg_swgt
          integer :: iproc
          character(len=128) gridfile
+         logical :: bin
+         real(dp) :: dv2g
+         integer :: npg
+         common /vegasiterweight/veg_wgt,veg_iave,veg_it,veg_swgt
+         common /bin/bin
+         common /vegasnumcalls/dv2g,npg
          common /eweakZ/amz,zewfac(4),zewnull(4)
          !$omp threadprivate(/eweakZ/)
          common /eweakW/amzW,stw,ewfac
@@ -91,6 +99,7 @@ module vegas_mod
          !$omp threadprivate(/currentprocess/)
          common /gridfilename/gridfile
          grid_filename = gridfile
+         bin = .false.
 #endif 
 
          grid_data(:,:,:) = 0d0
@@ -170,7 +179,7 @@ module vegas_mod
             !$omp parallel private(xwgt,wgt,x,div_index,tmp) shared(divisions, grid_data)
 #endif
 
-            !$omp do reduction(+:grid_data)
+            !$omp do schedule(dynamic) reduction(+:grid_data)
             do i = n_events_initial, n_events_final
                !>
                !> Generate a random vector of n_dim
@@ -280,6 +289,17 @@ module vegas_mod
             if (warmup_flag) then
                call write_grid_down(n_dim, divisions, grid_filename)
             endif
+
+#ifdef USE_NNLOJET
+            if(.not.warmup_flag) then
+               veg_it = k
+               veg_wgt = res
+               veg_swgt = final_result
+               npg = n_events ! Since we are not doing stratified sampling npg=n_events
+               call bino(2,0d0,0)
+            endif
+#endif 
+
 
          enddo
 
