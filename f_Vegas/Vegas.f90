@@ -45,7 +45,7 @@ module vegas_mod
          !> 
          integer, intent(in) :: n_sockets_in, socket_number_in
          integer, intent(in), optional :: port_in
-         character(len=128), intent(in), optional :: hostname_in
+         character(len=*), intent(in), optional :: hostname_in
          n_sockets = n_sockets_in
          socket_number = socket_number_in
          if (n_sockets > 1) then
@@ -279,13 +279,13 @@ module vegas_mod
             !>
             !> Treat the final results
             !> Compute the error
-            !> S =  (\int f^2/p) - (\int f)^2, where p, in first approximation = 1/n_events
+            !> S^2 =  (<f^2/p> - <f>^2)/N (with <g> = \int g (pdp))
             !> 
-            error_tmp = n_events*res_sq - res**2
+            error_tmp = (n_events*res_sq - res**2)/n_events
             if (error_tmp < 0d0) then
                error_tmp = 1d-10
             else
-               error_tmp = error_tmp/dsqrt(n_events-1d0)
+               error_tmp = dsqrt(error_tmp)
             endif
             !>
             !> Save the results to the resultados(:) array
