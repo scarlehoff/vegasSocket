@@ -8,21 +8,15 @@ module vegas_mod
 
    public :: vegas, vegasnr_new, activate_parallel_sockets
 
-   integer, parameter :: dp = kind(1.d0)
-#ifdef USE_SOCKETS
-   character(len=10), parameter :: hostname = "localhost" // char(0)
-   integer, parameter :: port = 8888
-   integer :: ifail = 0
-#endif
-
    ! Parameters
+   integer, parameter :: dp = kind(1.d0)
    integer, parameter :: NDMX = 100
    integer, parameter :: EXTERNAL_FUNCTIONS = 6
    integer, parameter :: MXDIM = 26
    real(dp), parameter :: ALPHA = 1.5d0
    real(dp), parameter :: TINY = 1d-10
    ! Write.read the grid using hexadecimal because that's what the old version uses
-   character(len=9) :: grid_fmt = "(/(5z16))"
+   character(len=9), parameter :: grid_fmt = "(/(5z16))"
 !     logical :: stratified_sampling = .false., &
 !             importance_sampling = .true.
 
@@ -34,19 +28,24 @@ module vegas_mod
    end type resultado
    type(resultado), allocatable, dimension(:) :: resultados
 
+   ! Socket data
+   character(len=:), allocatable :: hostname
+   integer :: port, ifail
+
    logical :: parallel_warmup = .false.
    logical :: warmup_flag = .true. 
    integer :: n_events_initial, n_events_final
    integer :: n_sockets, socket_number
 
-
    contains
-      subroutine activate_parallel_sockets(n_sockets_in, socket_number_in)
+      subroutine activate_parallel_sockets(n_sockets_in, socket_number_in, hostname_in, port_in)
          !>
          !> Store the total number of sockets
          !> And the socket number of that corresponds to this instance of Vegas
          !> 
          integer, intent(in) :: n_sockets_in, socket_number_in
+         integer, intent(in), optional :: port_in
+         character(len=128), intent(in), optional :: hostname_in
          n_sockets = n_sockets_in
          socket_number = socket_number_in
          if (n_sockets > 1) then
@@ -54,6 +53,19 @@ module vegas_mod
          else
             parallel_warmup = .false.
          endif
+         
+         if (present(hostname_in)) then
+            hostname = trim(hostname_in) // char(0)
+         else
+            hostname = "localhost" // char(0)
+         endif
+
+         if (present(port_in)) then
+            port = port_in
+         else
+            port = 8888
+         endif
+
       end subroutine
 
       subroutine vegas(f_integrand, n_dim, n_iter, n_events, final_result, sigma, chi2, &

@@ -5,16 +5,25 @@ Receives a double and sends 2*double
 """
 
 import socket
-
 import sys
+from argparse import ArgumentParser
+
 sys.path.append('..')
 sys.path.append('.')
 from src import vegas_socket
 
 
-HOST = ""
-PORT = 8888
-n_clients = 2
+parser = ArgumentParser()
+
+parser.add_argument("-H", "--hostname", help = "Hostname", default = "")
+parser.add_argument("-p", "--port", help = "Port", default = "8888")
+parser.add_argument("-n", "--nclients", help = "Number of clientes to wait for", default = "2")
+
+args = parser.parse_args()
+
+HOST = args.hostname
+PORT = int(args.port) 
+n_clients = int(args.nclients)
 
 # Open the server, bind it to HOST:PORT and wait for a connection
 # (for instance c_example)
