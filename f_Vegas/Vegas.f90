@@ -6,7 +6,7 @@ module vegas_mod
    implicit none
    private
 
-   public :: vegas, vegasnr, activate_parallel_sockets
+   public :: vegas, vegasnr_new, activate_parallel_sockets
 
    integer, parameter :: dp = kind(1.d0)
 #ifdef USE_SOCKETS
@@ -16,13 +16,15 @@ module vegas_mod
 #endif
 
    ! Parameters
-   integer, parameter :: NDMX = 10
+   integer, parameter :: NDMX = 100
    integer, parameter :: EXTERNAL_FUNCTIONS = 6
    integer, parameter :: MXDIM = 26
    real(dp), parameter :: ALPHA = 1.5d0
    real(dp), parameter :: TINY = 1d-10
+   ! Write.read the grid using hexadecimal because that's what the old version uses
+   character(len=9) :: grid_fmt = "(/(5z16))"
 !     logical :: stratified_sampling = .false., &
-!              importance_sampling = .true.
+!             importance_sampling = .true.
 
    type resultado
       real(dp) :: sigma
@@ -33,7 +35,7 @@ module vegas_mod
    type(resultado), allocatable, dimension(:) :: resultados
 
    logical :: parallel_warmup = .false.
-   logical :: warmup_flag = .true.
+   logical :: warmup_flag = .true. 
    integer :: n_events_initial, n_events_final
    integer :: n_sockets, socket_number
 
@@ -71,12 +73,14 @@ module vegas_mod
          real(dp), dimension(3, NDMX, n_dim), target :: grid_data
          real(dp), pointer :: res, res_sq
          real(dp), dimension(:,:), pointer :: div_res, div_res_sq
+         character(len=128) :: grid_filename = "grid_test.grid"
 
 #ifdef USE_NNLOJET
          real(dp) :: amz, zewfac, zewnull
          real(dp) :: amzW, stw, ewfac
          real(dp) :: rma2, rmb2, rm2, shat
          integer :: iproc
+         character(len=128) gridfile
          common /eweakZ/amz,zewfac(4),zewnull(4)
          !$omp threadprivate(/eweakZ/)
          common /eweakW/amzW,stw,ewfac
@@ -85,8 +89,9 @@ module vegas_mod
          !$omp threadprivate(/pmasses/)
          common /currentprocess/iproc
          !$omp threadprivate(/currentprocess/)
+         common /gridfilename/gridfile
+         grid_filename = gridfile
 #endif 
-   
 
          grid_data(:,:,:) = 0d0
          div_res => grid_data(1,:,:)
@@ -122,11 +127,16 @@ module vegas_mod
          !$ print *, " $ Number of threads selected: ", OMP_get_max_threads()
 
          !>
-         !> Initial rebining (ie, all subdivisions are equal)
+         !> Initial rebining
+         !> either all subdivisions equal or we read an old grid
          !>
-         do j = 1, n_dim
-            call rebin(1d0/NDMX, NDMX, rweight, divisions(:, j))
-         enddo
+         if(warmup_flag) then
+            do j = 1, n_dim
+               call rebin(1d0/NDMX, NDMX, rweight, divisions(:, j))
+            enddo
+         else
+            call read_grid_up(n_dim, divisions, grid_filename)
+         endif
 
          xjac = 1d0/n_events
          do k = 1, n_iter
@@ -235,7 +245,7 @@ module vegas_mod
                enddo
                !$omp end do
             endif
-
+  
 #ifdef USE_NNLOJET
             call destroy_parallel()
             call clear_pstore()
@@ -267,6 +277,10 @@ module vegas_mod
             call get_final_results(k, final_result, sigma, chi2)
             write(*,201) final_result, sigma, chi2
 
+            if (warmup_flag) then
+               call write_grid_down(n_dim, divisions, grid_filename)
+            endif
+
          enddo
 
          ! Clean before exit
@@ -278,7 +292,7 @@ module vegas_mod
 
       end subroutine vegas
 
-      subroutine vegasnr(region, ndim, fxn, init, ncall, itmx, nprn, tgral, sd, &
+      subroutine vegasnr_new(region, ndim, fxn, init, ncall, itmx, nprn, tgral, sd, &
             chi2a, sigR, sigS, sigV, sigT, sigVV, sigU)
          real(dp), dimension(2*MXDIM), intent(in) :: region
          integer, intent(in) :: ndim, init, ncall, itmx, nprn
@@ -289,13 +303,19 @@ module vegas_mod
          !> Wrapper for programs that call the old version of vegas
          !> It uses the same argument names as the old version
          !>
-
          print *, "Entering legacy wrapper for New Vegas!"
-         print *, "init, nprn, region(1): ", init, nprn, region(1)
+         print *, "init, nprn, region(1): ", nprn, region(1)
 
+         select case(init)
+         case(0)
+            warmup_flag = .true.
+         case(1)
+            warmup_flag = .false.
+         end select
+            
          call vegas(fxn, ndim, itmx, ncall, tgral, sd, chi2a, sigR, sigS, sigV, sigT, sigVV, sigU)
 
-      end subroutine vegasnr
+      end subroutine vegasnr_new
 
       subroutine get_final_results(k_iter, final_result, sigma, chi2)
          integer, intent(in) :: k_iter
@@ -364,10 +384,6 @@ module vegas_mod
             x(j) = reg_i + rand_x*(reg_f - reg_i) ! x(i) = rand_x
             wgt = wgt * xdelta * n_divisions
             div_index(j) = int_xn
-            if ((x(j) == 0d0).or.(x(j) == 1d0)) then
-               print *, "Weird", j
-               print *, rn
-            endif
          enddo
 
 
@@ -448,6 +464,33 @@ module vegas_mod
          subdivisions(1:n_divisions-1) = aux(1:n_divisions-1)
          subdivisions(n_divisions) = 1d0-1d-10
       end subroutine rebin
+
+      subroutine write_grid_down(n_dim, divisions, gridfile)
+         integer, intent(in) :: n_dim
+         real(dp), dimension(NDMX, n_dim), intent(in) :: divisions
+         character(len=128), intent(in) :: gridfile
+         integer :: i, j
+         write(*,*) "Writing grid to ", trim(gridfile)
+         open(unit = 11, file = trim(gridfile), status = 'unknown')
+         do j = 1, n_dim
+            write(11,grid_fmt) j, (divisions(i,j), i = 1, NDMX)
+         enddo
+         close(11)
+      end subroutine write_grid_down
+
+      subroutine read_grid_up(n_dim, divisions, gridfile)
+         integer, intent(in) :: n_dim
+         real(dp), dimension(NDMX, n_dim), intent(out) :: divisions
+         character(len=128), intent(in) :: gridfile
+         integer :: i, j, old_j
+         write(*,*) "Reading grid from ", trim(gridfile)
+         open(unit = 11, file = trim(gridfile), status = 'unknown')
+         do j = 1, n_dim
+            read(11,grid_fmt) old_j, (divisions(i,j), i = 1, NDMX)
+         enddo
+         close(11)
+      end subroutine read_grid_up
+
 
       real(dp) function internal_rand()
          internal_rand = rand()
