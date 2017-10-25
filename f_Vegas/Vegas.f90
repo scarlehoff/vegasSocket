@@ -170,9 +170,9 @@ module vegas_mod
                !>
                !> Rewind the random number sequence
                !> 
-               call roll_random(1, n_events_initial - 1)
+               call roll_random(1, n_events_initial - 1, n_dim)
                if (k > 1) then
-                  call roll_random(n_events_final + 1, n_events)
+                  call roll_random(n_events_final + 1, n_events, n_dim)
                endif
             endif
 #endif
@@ -545,12 +545,14 @@ module vegas_mod
       end function internal_rand
 
 #ifdef USE_SOCKETS
-      subroutine roll_random(ini, fin)
-         integer, intent(in) :: ini, fin
-         integer :: i
+      subroutine roll_random(ini, fin, n_dim)
+         integer, intent(in) :: ini, fin, n_dim
+         integer :: i, j
          real(dp) :: tmp
-         do i = ini, fin
-            tmp = internal_rand()
+         do j = 1, n_dim
+            do i = ini, fin
+               tmp = internal_rand()
+            enddo
          enddo
       end subroutine roll_random
 #endif
