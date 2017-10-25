@@ -475,7 +475,6 @@ module vegas_mod
          !> 
          k = 0
          dr = 0
-
          do i = 1, n_divisions-1
             do while (rc > dr) 
                k = k + 1
@@ -494,7 +493,7 @@ module vegas_mod
          enddo
 
          subdivisions(1:n_divisions-1) = aux(1:n_divisions-1)
-         subdivisions(n_divisions) = 1d0-1d-10
+         subdivisions(n_divisions) = 1d0
       end subroutine rebin
 
       subroutine write_grid_down(n_dim, divisions, gridfile)
@@ -538,6 +537,7 @@ module vegas_mod
          !> Wrapper for the generation of random variables
          !>
 #ifdef USE_NNLOJET
+         real(dp) :: rn
          internal_rand = rn()
 #else
          internal_rand = rand()
