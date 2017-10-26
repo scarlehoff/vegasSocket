@@ -14,7 +14,6 @@ module vegas_mod
    integer, parameter :: EXTERNAL_FUNCTIONS = 6
    integer, parameter :: MXDIM = 26
    real(dp), parameter :: ALPHA = 1.5d0
-   real(dp), parameter :: TINY = 1d-10
    ! Write.read the grid using hexadecimal because that's what the old version uses
    character(len=9), parameter :: grid_fmt = "(/(5z16))"
 !     logical :: stratified_sampling = .false., &
@@ -123,6 +122,10 @@ module vegas_mod
          print *, "Entering New Vegas"
 
          allocate(resultados(n_iter))
+         resultados(:)%weight = 0d0
+         resultados(:)%sigma = 0d0
+         resultados(:)%integral = 0d0
+         resultados(:)%chi2 = 0d0
 
          ! Initialise variables
          divisions(:,:) = 0d0
@@ -180,7 +183,7 @@ module vegas_mod
 #ifdef USE_NNLOJET
             !$omp parallel default(private) shared(divisions, grid_data) &
             !$omp& shared(n_dim, n_events_initial, n_events_final, xjac, warmup_flag) &
-            !$omp& shared(parallel_warmup, n_sockets, hostname, port) &
+            !$omp& shared(resultados, parallel_warmup, n_sockets, hostname, port) &
             !$omp& shared(res, res_sq, div_res, div_res_sq) &
             !$omp& copyin(/eweakZ/,/eweakW/,/pmasses/,/currentprocess/)
             call init_parallel()
@@ -281,9 +284,9 @@ module vegas_mod
             !> Compute the error
             !> S^2 =  (<f^2/p> - <f>^2)/N (with <g> = \int g (pdp))
             !> 
-            error_tmp = (n_events*res_sq - res**2)/n_events
+            error_tmp = (n_events*res_sq - res**2)/(n_events-1d0)
             if (error_tmp < 0d0) then
-               error_tmp = 1d-10
+               error_tmp = 1d-30
             else
                error_tmp = dsqrt(error_tmp)
             endif
@@ -447,8 +450,8 @@ module vegas_mod
          !> journal of comp phys, 27, 192-203 (1978) G.P. Lepage
          !>
          do i = 1, n_divisions
-            if (aux(i) < TINY) then
-               aux(i) = TINY
+            if (aux(i) < 1d-30) then
+               aux(i) = 1d-30
             endif
             rw(i) = ( (1d0 - aux(i)/aux_sum)/(dlog(aux_sum) - dlog(aux(i))) )**ALPHA
             rc = rc + rw(i)
