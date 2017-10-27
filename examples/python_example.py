@@ -32,15 +32,18 @@ server = vegas_socket.Vegas_Socket()
 server.bind(HOST, PORT)
 
 if HOST == "":
-    host_str = "localhost"
+    host_str = socket.gethostname()
 else:
     host_str = HOST
 
 print("Server up. Connect to " + host_str + ":" + str(PORT))
 print("Waiting for " + str(n_clients) + " clients")
 
+counter = 0
 while True:
+    counter += 1
     success = server.harmonize_integral(n_clients, verbose = True)
+    print("Iteration {} completed".format(counter))
 
 if success < 0:
     print("Something went wrong")
