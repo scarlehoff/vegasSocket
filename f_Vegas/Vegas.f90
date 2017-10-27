@@ -89,6 +89,7 @@ module vegas_mod
          character(len=128) :: grid_filename = "vegas_grid.grid"
          character(len=128) :: log_filename = "vegas_output.log"
          integer, parameter :: log_unit = 506
+         integer, dimension(2) :: units
 
 #ifdef USE_NNLOJET
          real(dp) :: amz, zewfac, zewnull
@@ -141,16 +142,19 @@ module vegas_mod
 
          !> Open up the log file
          open(unit = log_unit, file=trim(log_filename), position="Append", action="write")
+         units = (/6, log_unit/)
          write(log_unit,*) "Welcome to New Vegas"
 
          if (parallel_warmup) then
             n_events_per_instance = n_events/n_sockets
             n_events_initial = 1 + n_events_per_instance*(socket_number-1)
             n_events_final = socket_number*n_events_per_instance
-            write(*,'(A,I0,A,I0)') " > > > Vegas instance No: ", socket_number, " of ", n_sockets
-            write(*,'(A,I0,A)') " > > > Running for ", n_events_per_instance, " events per instance"
-            write(*,'(A,I0)') " > > > From: ", n_events_initial
-            write(*,'(A,I0)') " > > > To: ", n_events_final
+            do i = 1, 2
+               write(units(i),'(A,I0,A,I0)') " > > > Vegas instance No: ", socket_number, " of ", n_sockets
+               write(units(i),'(A,I0,A)') " > > > Running for ", n_events_per_instance, " events per instance"
+               write(units(i),'(A,I0)') " > > > From: ", n_events_initial
+               write(units(i),'(A,I0)') " > > > To: ", n_events_final
+            enddo
          else
             n_events_initial = 1
             n_events_final = n_events
@@ -174,6 +178,8 @@ module vegas_mod
 
          xjac = 1d0/n_events
          do k = 1, n_iter
+            close(log_unit)
+            open(unit = log_unit, file=trim(log_filename), position="Append", action="write")
             write(*,'(A,I0)') "Commencing iteration n ", k
             write(*,'(A,I0)') "Number of events: ", n_events
             grid_data(:,:,:) = 0d0
