@@ -75,15 +75,16 @@ module vegas_mod
          real(dp), intent(out) :: final_result, sigma, chi2
          real(dp), external, optional :: sigR, sigS, sigV, sigT, sigVV, sigU
 
-         integer :: i, j, k, n_events_per_instance
-         real(dp) :: tmp, err_tmp, err_tmp2, xjac, wgt, xwgt
+         integer :: i, j, k, ind, n_events_per_instance
+         real(dp) :: tmp, tmp2, err_tmp, err_tmp2, xjac, wgt, xwgt
          integer, dimension(n_dim) :: div_index
          real(dp), dimension(n_dim) :: x
          real(dp), dimension(NDMX) :: rweight
          real(dp), dimension(NDMX, n_dim) :: divisions
-         real(dp), dimension(3, NDMX, n_dim), target :: grid_data
-         real(dp), pointer :: res, res_sq
+         real(dp), dimension(5, NDMX, n_dim), target :: grid_data
+         real(dp), pointer :: res, res_sq, err_res, err_res_sq
          real(dp), dimension(:,:), pointer :: div_res, div_res_sq
+         real(dp), dimension(:,:), pointer :: err_div_res, err_div_res_sq
 
          ! Vegas output files
          character(len=128) :: grid_filename = "vegas_grid.grid"
@@ -123,14 +124,19 @@ module vegas_mod
 
          print *, "Entering New Vegas"
 
-         !> Initialise variables
-         grid_data(:,:,:) = 0d0
+         !> Initialise pointers
          div_res => grid_data(1,:,:)
          div_res_sq => grid_data(2,:,:)
          res => grid_data(3,1,1)
-         res_sq => grid_data(3,2,2)
-         divisions(:,:) = 0d0
+         err_res => grid_data(3,1,2)
+         res_sq => grid_data(3,2,1)
+         err_res_sq => grid_data(3,2,2)
+         err_div_res => grid_data(4,:,:)
+         err_div_res_sq => grid_data(5,:,:)
+         !> Initialise variables
+         grid_data(:,:,:) = 0d0
          divisions(1,:) = 1d0
+         divisions(2:,:) = 0d0
          rweight(:) = 1d0
          call seed_rand(1)
 
@@ -202,10 +208,11 @@ module vegas_mod
             !$omp& shared(n_dim, n_events_initial, n_events_final, xjac, warmup_flag) &
             !$omp& shared(resultados, parallel_warmup, n_sockets, hostname, port) &
             !$omp& shared(res, res_sq, div_res, div_res_sq) &
+            !$omp& shared(err_res, err_res_sq, err_div_res, err_div_res_sq) &
             !$omp& copyin(/eweakZ/,/eweakW/,/pmasses/,/currentprocess/)
             call init_parallel()
 #else
-            !$omp parallel private(xwgt,wgt,x,div_index,tmp) shared(divisions, grid_data)
+            !$omp parallel private(tmp,tmp2,xwgt,wgt,x,div_index) shared(divisions, grid_data)
 #endif
 
             !$omp do schedule(dynamic) reduction(+:grid_data)
@@ -233,21 +240,42 @@ module vegas_mod
                !> For each event we need to store both f and f^2
                !> since the variance of a MC integation is S = (\int f^2) - (\int f)^2
                !>
-               res = res + tmp
-               res_sq = res_sq + tmp**2
+               tmp2 = tmp**2
+               !> 
+               !> store the error in the sum
+               !>
+!                 err_res = err_res + error_sum(res, tmp)
+!                 err_res_sq = err_res_sq + error_sum(res_sq, tmp2)
+               grid_data(3,1,1) = grid_data(3,1,1) + tmp
+               grid_data(3,2,1) = grid_data(3,2,1) + tmp2
+!                 !$omp critical
+!                 res = res + tmp
+!                 res_sq = res_sq + tmp2
+!                 !$omp end critical
                !>
                !> We also need to store the value of the integral for each subdivision of the 
                !> integration region
                !>
                if (warmup_flag) then
                   do j = 1, n_dim
-!                       div_res(div_index(j), j) = div_res(div_index(j),j) + tmp
-                     div_res_sq(div_index(j), j) = div_res_sq(div_index(j), j) + tmp**2
+                     ind = div_index(j)
+!                       div_res(ind, j) = div_res(ind,j) + tmp
+!                       err_div_res_sq(ind, j) = err_div_res_sq(ind, j) + error_sum(div_res_sq(ind, j), tmp2)
+                     grid_data(2,ind,j) = grid_data(2,ind,j) + tmp2
+!                       div_res_sq(ind, j) = div_res_sq(ind, j) + tmp2
                   enddo
                endif
             enddo
             !$omp end do
 
+!              res = res + err_res
+!              res_sq = res_sq + err_res_sq
+!              !$omp do schedule(dynamic) reduction(+:grid_data)
+!              do j = 1, n_dim
+!                 div_res_sq(:,j) = div_res_sq(:,j) + err_div_res_sq(:,j)
+!              enddo
+!              !$omp end do
+!  
             !>
             !> In principle, "end do" implies synchronisation, however 
             !> during debugging it was not clear that all threads were 
@@ -567,6 +595,22 @@ module vegas_mod
          enddo
          close(11)
       end subroutine read_grid_up
+      
+      real(dp) function error_sum(a, b)
+         real(dp), intent(in) :: a,b
+         real(dp) :: s, ap, bp, da, db
+         ! lo digits can be lost
+         s = a + b
+         ! a' and b' are the actual value we are summing when
+         ! rounding to real(dp)
+         ap = s - b
+         bp = (s - ap)
+         ! da db are the difference between the actual a,b
+         ! and the a and b which are actually being used
+         da = a - ap
+         db = b - bp
+         error_sum = da + db
+      end function error_sum
 
       subroutine seed_rand(seed)
          integer, intent(in) :: seed
