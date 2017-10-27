@@ -76,7 +76,7 @@ module vegas_mod
          real(dp), external, optional :: sigR, sigS, sigV, sigT, sigVV, sigU
 
          integer :: i, j, k, n_events_per_instance
-         real(dp) :: tmp, error_tmp, xjac, wgt, xwgt
+         real(dp) :: tmp, err_tmp, err_tmp2, xjac, wgt, xwgt
          integer, dimension(n_dim) :: div_index
          real(dp), dimension(n_dim) :: x
          real(dp), dimension(NDMX) :: rweight
@@ -84,7 +84,11 @@ module vegas_mod
          real(dp), dimension(3, NDMX, n_dim), target :: grid_data
          real(dp), pointer :: res, res_sq
          real(dp), dimension(:,:), pointer :: div_res, div_res_sq
-         character(len=128) :: grid_filename = "grid_test.grid"
+
+         ! Vegas output files
+         character(len=128) :: grid_filename = "vegas_grid.grid"
+         character(len=128) :: log_filename = "vegas_output.log"
+         integer, parameter :: log_unit = 506
 
 #ifdef USE_NNLOJET
          real(dp) :: amz, zewfac, zewnull
@@ -94,6 +98,7 @@ module vegas_mod
          real(dp) :: veg_wgt, veg_swgt
          integer :: iproc
          character(len=128) gridfile
+         character(len=128) slogname
          logical :: bin
          real(dp) :: dv2g
          integer :: npg
@@ -109,17 +114,24 @@ module vegas_mod
          common /currentprocess/iproc
          !$omp threadprivate(/currentprocess/)
          common /gridfilename/gridfile
+         common /log/slogname
          grid_filename = gridfile
+         log_filename = slogname
          bin = .false.
 #endif 
 
+         print *, "Entering New Vegas"
+
+         !> Initialise variables
          grid_data(:,:,:) = 0d0
          div_res => grid_data(1,:,:)
          div_res_sq => grid_data(2,:,:)
          res => grid_data(3,1,1)
          res_sq => grid_data(3,2,2)
-
-         print *, "Entering New Vegas"
+         divisions(:,:) = 0d0
+         divisions(1,:) = 1d0
+         rweight(:) = 1d0
+         call seed_rand(1)
 
          allocate(resultados(n_iter))
          resultados(:)%weight = 0d0
@@ -127,18 +139,16 @@ module vegas_mod
          resultados(:)%integral = 0d0
          resultados(:)%chi2 = 0d0
 
-         ! Initialise variables
-         divisions(:,:) = 0d0
-         divisions(1,:) = 1d0
-         rweight(:) = 1d0
-         call seed_rand(1)
+         !> Open up the log file
+         open(unit = log_unit, file=trim(log_filename), position="Append", action="write")
+         write(log_unit,*) "Welcome to New Vegas"
 
          if (parallel_warmup) then
             n_events_per_instance = n_events/n_sockets
             n_events_initial = 1 + n_events_per_instance*(socket_number-1)
             n_events_final = socket_number*n_events_per_instance
             write(*,'(A,I0,A,I0)') " > > > Vegas instance No: ", socket_number, " of ", n_sockets
-            write(*,'(A,I0,A)') " > > > Running for ", n_events_per_instance, "events"
+            write(*,'(A,I0,A)') " > > > Running for ", n_events_per_instance, " events per instance"
             write(*,'(A,I0)') " > > > From: ", n_events_initial
             write(*,'(A,I0)') " > > > To: ", n_events_final
          else
@@ -165,6 +175,7 @@ module vegas_mod
          xjac = 1d0/n_events
          do k = 1, n_iter
             write(*,'(A,I0)') "Commencing iteration n ", k
+            write(*,'(A,I0)') "Number of events: ", n_events
             grid_data(:,:,:) = 0d0
 
 #ifdef USE_SOCKETS
@@ -187,9 +198,6 @@ module vegas_mod
             !$omp& shared(res, res_sq, div_res, div_res_sq) &
             !$omp& copyin(/eweakZ/,/eweakW/,/pmasses/,/currentprocess/)
             call init_parallel()
-            !$omp single
-            print *, "NNLOJET initilisation done"
-            !$omp end single
 #else
             !$omp parallel private(xwgt,wgt,x,div_index,tmp) shared(divisions, grid_data)
 #endif
@@ -273,9 +281,6 @@ module vegas_mod
 #ifdef USE_NNLOJET
             call destroy_parallel()
             call clear_pstore()
-            !$omp single
-            print *, "NNLOJET finalisation done"
-            !$omp end single
 #endif
 
             !$omp end parallel
@@ -284,25 +289,26 @@ module vegas_mod
             !> Compute the error
             !> S^2 =  (<f^2/p> - <f>^2)/N (with <g> = \int g (pdp))
             !> 
-            error_tmp = (n_events*res_sq - res**2)/(n_events-1d0)
-            if (error_tmp < 0d0) then
-               error_tmp = 1d-30
+            err_tmp2 = (n_events*res_sq - res**2)/(n_events-1d0)
+            if (err_tmp2 < 0d0) then
+               err_tmp = 1d-30
             else
-               error_tmp = dsqrt(error_tmp)
+               err_tmp = dsqrt(err_tmp2)
             endif
+
             !>
             !> Save the results to the resultados(:) array
             !> 
-            resultados(k)%sigma = error_tmp
-            resultados(k)%weight = 1d0/error_tmp**2
+            resultados(k)%sigma = err_tmp
+            resultados(k)%weight = 1d0/err_tmp2
             resultados(k)%integral = res
-            write(*,200) k, res, error_tmp
 
-            call get_final_results(k, final_result, sigma, chi2)
-            write(*,201) final_result, sigma, chi2
+
+            call print_final_results(k, final_result, sigma, chi2, log_unit)
 
             if (warmup_flag) then
                call write_grid_down(n_dim, divisions, grid_filename)
+               write(log_unit, *) "Writing grid to " // grid_filename
             endif
 
 #ifdef USE_NNLOJET
@@ -315,15 +321,11 @@ module vegas_mod
             endif
 #endif 
 
-
          enddo
 
          ! Clean before exit
          deallocate(resultados)
-
-         ! Formateo del output
-      200   FORMAT('Iteration no: ', I5, ' Integral = ', g14.7, ' +/- ', g9.2)
-      201   FORMAT('     > > > > Total result: ', g14.7, ' +/- ', g9.2, ' chi2: ', g9.2)
+         close(log_unit)
 
       end subroutine vegas
 
@@ -338,8 +340,7 @@ module vegas_mod
          !> Wrapper for programs that call the old version of vegas
          !> It uses the same argument names as the old version
          !>
-         print *, "Entering legacy wrapper for New Vegas!"
-         print *, "init, nprn, region(1): ", nprn, region(1)
+         print *, " > > Entering legacy wrapper for New Vegas! < < "
 
          select case(init)
          case(0)
@@ -352,15 +353,20 @@ module vegas_mod
 
       end subroutine vegasnr_new
 
-      subroutine get_final_results(k_iter, final_result, sigma, chi2)
+      subroutine print_final_results(k_iter, final_result, sigma, chi2, log_unit)
          integer, intent(in) :: k_iter
          real(dp), intent(out) :: final_result, sigma, chi2
+         integer, intent(in) :: log_unit
          real(dp) :: weight_sum, aux_result, chi2_sum
+         integer :: i
+         integer, dimension(2) :: units
+         units = (/6, log_unit/)
 
          !>
          !> Weighted average of final results
          !> weight_i = w_i = 1/sigma^2
          !> final_result = (\sum res_i * w_i) / (\sum w_i)
+         !> Returns final_result, std error and chi2 just in case
          !> 
 
          weight_sum   = sum(resultados(:)%weight)
@@ -370,7 +376,28 @@ module vegas_mod
          chi2_sum     = sum(resultados(:)%integral**2*resultados(:)%weight)
          chi2         = max(0d0, (chi2_sum - final_result*aux_result)/(k_iter - 0.99d0))
 
-      end subroutine get_final_results
+         !> 
+         !> Prints to stdout and a .log file
+         !>
+         do i = 1, 2
+#ifdef USE_NNLOJET
+            write(units(i),201) k_iter, resultados(k_iter)%integral, final_result, resultados(k_iter)%sigma, sigma, chi2
+      201 format(/ &
+     &   '************* Integration by Vegas (iteration ',i3,') **************',/ '*',63x,'*'/, &
+     &   '*  integral  = ',g14.8,2x, ' accum. integral = ',g14.8,'*'/, &
+     &   '*  std. dev. = ',g14.8,2x, ' accum. std. dev = ',g14.8,'*'/,'*',63x,'*'/, &
+     &   '**************   chi**2/iteration = ', g10.4,'   ****************' /)
+#else
+            write(units(i),201) k_iter, resultados(k_iter)%integral, resultados(k_iter)%sigma, final_result, sigma, chi2
+      201 format(/&
+         & 'Result for iteration number ',I0,':',/, &
+         & ' > > > I = ', g14.8,' +/- ', g14.8,/, &
+         & ' > Total result: ', g14.8,' +/- ', g14.8,/, &
+         & ' > chi2/n-1: ', g10.4/)
+#endif
+         enddo
+
+      end subroutine print_final_results
 
       subroutine generate_random_array(n_dim, n_divisions, divisions, div_index, x, wgt)
          !>
@@ -504,6 +531,11 @@ module vegas_mod
          real(dp), dimension(NDMX, n_dim), intent(in) :: divisions
          character(len=128), intent(in) :: gridfile
          integer :: i, j
+         !> 
+         !> Writes down the Vegas adapted grid as hexadecimal number to a
+         !> file. This is compatible with other version of Vegas used in
+         !> HEP applications
+         !> 
          write(*,*) "Writing grid to ", trim(gridfile)
          open(unit = 11, file = trim(gridfile), status = 'unknown')
          do j = 1, n_dim
@@ -517,6 +549,11 @@ module vegas_mod
          real(dp), dimension(NDMX, n_dim), intent(out) :: divisions
          character(len=128), intent(in) :: gridfile
          integer :: i, j, old_j
+         !>
+         !> Read the Vegas adapted grid in hexadecimal from a file
+         !> This is compatible with other version of Vegas used in
+         !> HEP applications
+         !>
          write(*,*) "Reading grid from ", trim(gridfile)
          open(unit = 11, file = trim(gridfile), status = 'unknown')
          do j = 1, n_dim
@@ -552,6 +589,10 @@ module vegas_mod
          integer, intent(in) :: ini, fin, n_dim
          integer :: i, j
          real(dp) :: tmp
+         !>
+         !> Wrapper to roll the random number generator when using sockets
+         !> in order to ensure all sockets are synchronised 
+         !> 
          do j = 1, n_dim
             do i = ini, fin
                tmp = internal_rand()

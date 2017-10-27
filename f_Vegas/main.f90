@@ -27,6 +27,6 @@ program vegas_example
 
    call vegas(lepage_test, n_dim, n_iter, n_events, res, sigma, chi2)
 
-   print *, "integral of (x*y dxdy) from 0 to 1 is: ", res, "+/-", sigma
+   print *, "integral total is: ", res, "+/-", sigma
 
 end program

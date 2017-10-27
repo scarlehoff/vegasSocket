@@ -9,16 +9,22 @@ remove_tag = "USE_NNLOJET"
 
 file_in = "Vegas.f90"
 write_down = True
+else_flag = False
 
 lines = []
 with open(file_in, 'r') as f:
     for line in f:
         if remove_tag in line:
             write_down = False
-        if write_down:
+        if ("endif" in line) and (else_flag):
+            else_flag = False
+        elif write_down:
             lines.append(line)
         if ("#endif" in line) and (not write_down):
             write_down = True
+        if ("#else" in line) and (not write_down):
+            write_down = True
+            else_flag = True
 
 with open(file_in, 'w') as f:
     f.writelines(lines)
