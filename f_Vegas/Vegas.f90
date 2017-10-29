@@ -14,16 +14,15 @@ module vegas_mod
    integer, parameter :: EXTERNAL_FUNCTIONS = 6
    integer, parameter :: MXDIM = 26
    real(dp), parameter :: ALPHA = 1.5d0
+   logical, parameter :: kahan = .true.
    ! Write.read the grid using hexadecimal because that's what the old version uses
    character(len=9), parameter :: grid_fmt = "(/(5z16))"
-!     logical :: stratified_sampling = .false., &
-!             importance_sampling = .true.
 
    type resultado
-      real(dp) :: sigma
-      real(dp) :: weight
-      real(dp) :: integral
-      real(dp) :: chi2
+      real(dp) :: sigma = 0d0
+      real(dp) :: weight = 0d0
+      real(dp) :: integral = 0d0
+      real(dp) :: chi2 = 0d0
    end type resultado
    type(resultado), allocatable, dimension(:) :: resultados
 
@@ -31,7 +30,7 @@ module vegas_mod
    character(len=:), allocatable :: hostname
    integer :: port, ifail
 
-   logical :: parallel_warmup = .false.
+   logical :: socketed_warmup = .false.
    logical :: warmup_flag = .true. 
    integer :: n_events_initial, n_events_final
    integer :: n_sockets, socket_number
@@ -39,8 +38,9 @@ module vegas_mod
    contains
       subroutine activate_parallel_sockets(n_sockets_in, socket_number_in, hostname_in, port_in)
          !>
-         !> Store the total number of sockets
-         !> And the socket number of that corresponds to this instance of Vegas
+         !> This subroutine must be called by the program willing to use vegas prior
+         !> to the actual call to vegas in order to define the number of sockets that are going to be used
+         !> the socket number this instance of vegas will have (ex: 3 of 6 would be n_sockets = 6, socket_number = 3
          !> 
          integer, intent(in) :: n_sockets_in, socket_number_in
          integer, intent(in), optional :: port_in
@@ -48,9 +48,9 @@ module vegas_mod
          n_sockets = n_sockets_in
          socket_number = socket_number_in
          if (n_sockets > 1) then
-            parallel_warmup = .true.
+            socketed_warmup = .true.
          else
-            parallel_warmup = .false.
+            socketed_warmup = .false.
          endif
         
          if (present(hostname_in)) then
@@ -77,14 +77,23 @@ module vegas_mod
 
          integer :: i, j, k, ind, n_events_per_instance
          real(dp) :: tmp, tmp2, err_tmp, err_tmp2, xjac, wgt, xwgt
-         integer, dimension(n_dim) :: div_index
+         ! Random variables vector
          real(dp), dimension(n_dim) :: x
+         ! Stores in which vegas subdivision each random number falls
+         integer, dimension(n_dim) :: div_index
+         ! Auxiliary array to be use during grid adaptation (this one only used upon first integration)
          real(dp), dimension(NDMX) :: rweight
+         ! Store the Vegas grid
          real(dp), dimension(NDMX, n_dim) :: divisions
+         ! All data necessary for integration or grid adaptation will be stored in grid_data
          real(dp), dimension(5, NDMX, n_dim), target :: grid_data
-         real(dp), pointer :: res, res_sq, err_res, err_res_sq
-         real(dp), dimension(:,:), pointer :: div_res, div_res_sq
-         real(dp), dimension(:,:), pointer :: err_div_res, err_div_res_sq
+         ! Pointers to different slices of the array for ease of use
+         ! res and res2 are the current sum of f and f^2 (f=integral) 
+         ! and err_r, err_r2 their correspondent precision error from kahan sum
+         real(dp), pointer :: res, res2, err_r, err_r2
+         ! ar_[] stores the result of [] for each of the NDMX, n_dim vegas subdivisions
+         real(dp), dimension(:,:), pointer :: ar_res, ar_res2
+         real(dp), dimension(:,:), pointer :: ar_err, ar_err2
 
          ! Vegas output files
          character(len=128) :: grid_filename = "vegas_grid.grid"
@@ -122,39 +131,48 @@ module vegas_mod
          bin = .false.
 #endif 
 
+#ifndef USE_SOCKETS
+         socketed_warmup = .false.
+#endif
+
          print *, "Entering New Vegas"
 
-         !> Initialise pointers
-         div_res => grid_data(1,:,:)
-         div_res_sq => grid_data(2,:,:)
-         res => grid_data(3,1,1)
-         err_res => grid_data(3,1,2)
-         res_sq => grid_data(3,2,1)
-         err_res_sq => grid_data(3,2,2)
-         err_div_res => grid_data(4,:,:)
-         err_div_res_sq => grid_data(5,:,:)
+         !> Initialise pointers (we assume NDMX is always >= 4)
+         !> but we make no assumption on n_dim
+         res  => grid_data(1,1,1)
+         res2 => grid_data(1,2,1)
+         ar_res  => grid_data(2,:,:)
+         ar_res2 => grid_data(3,:,:)
+         if (kahan) then
+            err_r  => grid_data(1,3,1)
+            err_r2 => grid_data(1,4,1)
+            ar_err  => grid_data(4,:,:)
+            ar_err2 => grid_data(5,:,:)
+         endif
+
          !> Initialise variables
          grid_data(:,:,:) = 0d0
          divisions(1,:) = 1d0
          divisions(2:,:) = 0d0
          rweight(:) = 1d0
+         xjac = 1d0/n_events
          call seed_rand(1)
 
          allocate(resultados(n_iter))
-         resultados(:)%weight = 0d0
-         resultados(:)%sigma = 0d0
-         resultados(:)%integral = 0d0
-         resultados(:)%chi2 = 0d0
 
-         !> Open up the log file
+         !> Open up the log file and start writing to it
          open(unit = log_unit, file=trim(log_filename), position="Append", action="write")
          units = (/6, log_unit/)
          write(log_unit,*) "Welcome to New Vegas"
 
-         if (parallel_warmup) then
+         if (socketed_warmup) then
+            !> if sockets are active, follow necessary initialisation
             n_events_per_instance = n_events/n_sockets
             n_events_initial = 1 + n_events_per_instance*(socket_number-1)
             n_events_final = socket_number*n_events_per_instance
+            if (socket_number == 1) then
+               n_events_final = n_events_final + mod(n_events, n_sockets)
+            endif
             do i = 1, 2
                write(units(i),'(A,I0,A,I0)') " > > > Vegas instance No: ", socket_number, " of ", n_sockets
                write(units(i),'(A,I0,A)') " > > > Running for ", n_events_per_instance, " events per instance"
@@ -170,11 +188,9 @@ module vegas_mod
          !$ print *, " $ Maximum number of threads: ", OMP_get_num_procs()
          !$ print *, " $ Number of threads selected: ", OMP_get_max_threads()
 
-         !>
          !> Initial rebining
-         !> either all subdivisions equal or we read an old grid
-         !>
-         if(warmup_flag) then
+         !> we can either create a new grid or read an old one
+         if (warmup_flag) then
             do j = 1, n_dim
                call rebin(1d0/NDMX, NDMX, rweight, divisions(:, j))
             enddo
@@ -182,46 +198,45 @@ module vegas_mod
             call read_grid_up(n_dim, divisions, grid_filename)
          endif
 
-         xjac = 1d0/n_events
+         !>
+         !> Start integration loop
+         !>
          do k = 1, n_iter
-            close(log_unit)
+            close(log_unit) 
             open(unit = log_unit, file=trim(log_filename), position="Append", action="write")
-            write(*,'(A,I0)') "Commencing iteration n ", k
-            write(*,'(A,I0)') "Number of events: ", n_events
-            grid_data(:,:,:) = 0d0
+            do i = 1, 2
+               write(units(i),'(A,I0)') "Commencing iteration n ", k
+               write(units(i),'(A,I0)') "Number of events: ", n_events
+            enddo
 
-#ifdef USE_SOCKETS
-            if(parallel_warmup) then
+            if(socketed_warmup) then
                print *, "Sockets are active"
-               !>
                !> Rewind the random number sequence
-               !> 
                call roll_random(1, n_events_initial - 1, n_dim)
                if (k > 1) then
                   call roll_random(n_events_final + 1, n_events, n_dim)
                endif
             endif
-#endif
 
 #ifdef USE_NNLOJET
             !$omp parallel default(private) shared(divisions, grid_data) &
             !$omp& shared(n_dim, n_events_initial, n_events_final, xjac, warmup_flag) &
-            !$omp& shared(resultados, parallel_warmup, n_sockets, hostname, port) &
-            !$omp& shared(res, res_sq, div_res, div_res_sq) &
-            !$omp& shared(err_res, err_res_sq, err_div_res, err_div_res_sq) &
+            !$omp& shared(resultados, socketed_warmup, n_sockets, hostname, port) &
+            !$omp& shared(res, res2, err_r, err_r2) &
+            !$omp& shared(ar_res, ar_res2, ar_err, ar_err2) &
             !$omp& copyin(/eweakZ/,/eweakW/,/pmasses/,/currentprocess/)
             call init_parallel()
 #else
             !$omp parallel private(tmp,tmp2,xwgt,wgt,x,div_index) shared(divisions, grid_data)
 #endif
 
-            !$omp do schedule(dynamic) reduction(+:grid_data)
+            !$omp do 
             do i = n_events_initial, n_events_final
+
                !>
                !> Generate a random vector of n_dim
-               !> TODO: It needs to be omp critical otherwise the program slows down in kernel calls at this point
-               !> maybe rand() is at fault? investigate
-               !>
+               !> For reproducibility of results, this has to be omp critical
+               !> 
                !$omp critical
                call generate_random_array(n_dim, NDMX, divisions, div_index, x, wgt)
                !$omp end critical
@@ -235,60 +250,64 @@ module vegas_mod
                else
                   tmp = xwgt*f_integrand(x, n_dim)
                endif
-
                !> 
                !> For each event we need to store both f and f^2
                !> since the variance of a MC integation is S = (\int f^2) - (\int f)^2
                !>
                tmp2 = tmp**2
-               !> 
-               !> store the error in the sum
+
+               !$omp critical 
                !>
-!                 err_res = err_res + error_sum(res, tmp)
-!                 err_res_sq = err_res_sq + error_sum(res_sq, tmp2)
-               grid_data(3,1,1) = grid_data(3,1,1) + tmp
-               grid_data(3,2,1) = grid_data(3,2,1) + tmp2
-!                 !$omp critical
-!                 res = res + tmp
-!                 res_sq = res_sq + tmp2
-!                 !$omp end critical
+               !> We do omp critical instead of "reduction(+:grid_data)" because
+               !> 1) Kahan summation needs information on previous call
+               !> 2) we want to use the pointers for clarity
+               !> Todo: benchmark how much faster would reduction be
+               !> 
+               res = res + tmp
+               res2 = res2 + tmp2
+               if (kahan) then
+                  err_r = err_r + error_sum(res, tmp)
+                  err_r2 = err_r2 + error_sum(res2, tmp2)
+               endif
                !>
                !> We also need to store the value of the integral for each subdivision of the 
                !> integration region
+               !> (non-squared quantities not needed for importance sampling)
                !>
                if (warmup_flag) then
                   do j = 1, n_dim
-                     ind = div_index(j)
-!                       div_res(ind, j) = div_res(ind,j) + tmp
-!                       err_div_res_sq(ind, j) = err_div_res_sq(ind, j) + error_sum(div_res_sq(ind, j), tmp2)
-                     grid_data(2,ind,j) = grid_data(2,ind,j) + tmp2
-!                       div_res_sq(ind, j) = div_res_sq(ind, j) + tmp2
+                     ind = div_index(j) 
+!                       ar_res(ind, j) = ar_res(ind, j) + tmp2
+                     ar_res2(ind, j) = ar_res2(ind, j) + tmp2
+                     if (kahan) then
+!                          ar_err(ind, j) = ar_err(ind, j) + error_sum(ar_err(ind,j), tmp2)
+                        ar_err2(ind, j) = ar_err2(ind, j) + error_sum(ar_err2(ind,j), tmp2)
+                     endif
                   enddo
                endif
+               !$omp end critical
             enddo
-            !$omp end do
+            !$omp enddo
 
-!              res = res + err_res
-!              res_sq = res_sq + err_res_sq
-!              !$omp do schedule(dynamic) reduction(+:grid_data)
-!              do j = 1, n_dim
-!                 div_res_sq(:,j) = div_res_sq(:,j) + err_div_res_sq(:,j)
-!              enddo
-!              !$omp end do
-!  
-            !>
-            !> In principle, "end do" implies synchronisation, however 
-            !> during debugging it was not clear that all threads were 
-            !> finished with the loop at this point
-            !>
-            !$omp barrier
+            if (kahan) then
+               res = res + err_r
+               res2 = res2 + err_r2
+               !$omp do 
+               do j = 1, n_dim
+!                    ar_res(:,j) = ar_res(:,j) + ar_err(:,j)
+                  ar_res2(:,j) = ar_res2(:,j) + ar_err2(:,j)
+               enddo
+               !$omp enddo
+            endif
+
 #ifdef USE_SOCKETS
-            !$omp master
             !>
             !> If we are using sockets, send the value of the integral
             !> for each subdivision to the server and wait for a response
+            !> todo: let another thread roll the random numbers while we wait
             !>
-            if (parallel_warmup) then
+            if (socketed_warmup) then
+               !$omp single
                write(*,'(A,A,A,I0)')"Communicating with server at ", hostname, ":", port
                call socket_exchange(grid_data, size(grid_data)*dp, hostname, port, ifail)
                if (ifail == 0) then
@@ -296,18 +315,16 @@ module vegas_mod
                else
                   print *, "Server communication failed"
                endif
+               !$omp end single
+               !$omp barrier
             endif
-            !$omp end master
-            !$omp barrier
 #endif
 
-            !>
-            !> And refine the grid for the next iteration
-            !> 
+            !> Refine the grid for the next iteration
             if(warmup_flag) then
                !$omp do
                do j = 1, n_dim
-                  call refine_grid(NDMX, div_res_sq(:,j), divisions(:,j))
+                  call refine_grid(NDMX, ar_res2(:,j), divisions(:,j))
                enddo
                !$omp end do
             endif
@@ -323,7 +340,7 @@ module vegas_mod
             !> Compute the error
             !> S^2 =  (<f^2/p> - <f>^2)/N (with <g> = \int g (pdp))
             !> 
-            err_tmp2 = (n_events*res_sq - res**2)/(n_events-1d0)
+            err_tmp2 = (n_events*res2 - res**2)/(n_events-1d0)
             if (err_tmp2 < 0d0) then
                err_tmp = 1d-30
             else
@@ -331,13 +348,13 @@ module vegas_mod
             endif
 
             !>
-            !> Save the results to the resultados(:) array
+            !> Save the results (globally accessible for this module)
+            !> print them to the log file and std output
+            !> And retrieve the current I and error
             !> 
             resultados(k)%sigma = err_tmp
             resultados(k)%weight = 1d0/err_tmp2
             resultados(k)%integral = res
-
-
             call print_final_results(k, final_result, sigma, chi2, log_unit)
 
             if (warmup_flag) then
@@ -354,6 +371,9 @@ module vegas_mod
                call bino(2,0d0,0)
             endif
 #endif 
+
+            !> Resets grid_data after every iteration
+            grid_data(:,:,:) = 0d0
 
          enddo
 
@@ -374,7 +394,7 @@ module vegas_mod
          !> Wrapper for programs that call the old version of vegas
          !> It uses the same argument names as the old version
          !>
-         print *, " > > Entering legacy wrapper for New Vegas! < < "
+         print *, " > > Entering legacy wrapper for NNLOJET with Vegas! < < "
 
          select case(init)
          case(0)
@@ -482,7 +502,6 @@ module vegas_mod
             div_index(j) = int_xn
          enddo
 
-
       end subroutine generate_random_array
 
       subroutine refine_grid(n_divisions, div_sq, divisions)
@@ -530,7 +549,6 @@ module vegas_mod
          integer :: i, k
          real(dp) :: dr, old_xf, old_xi
          real(dp), dimension(n_divisions) :: aux
-
          !>
          !> Reweight the integration subdivisions according to
          !> the vector rw.
@@ -596,7 +614,7 @@ module vegas_mod
          close(11)
       end subroutine read_grid_up
       
-      real(dp) function error_sum(a, b)
+      pure real(dp) function error_sum(a, b)
          real(dp), intent(in) :: a,b
          real(dp) :: s, ap, bp, da, db
          ! lo digits can be lost
@@ -634,7 +652,6 @@ module vegas_mod
 #endif
       end function internal_rand
 
-#ifdef USE_SOCKETS
       subroutine roll_random(ini, fin, n_dim)
          integer, intent(in) :: ini, fin, n_dim
          integer :: i, j
@@ -649,6 +666,5 @@ module vegas_mod
             enddo
          enddo
       end subroutine roll_random
-#endif
 
 end module vegas_mod
