@@ -67,13 +67,10 @@ class Generic_Socket:
     def send_data(self, msg):
         """ Sends binary data
         """
-        sent = self.sock.send(msg)
-#         totalsent = 0
-#         while totalsent < MSGLEN:
-#             sent = self.sock.send(msg[totalsent:])
-#             if sent == 0:
-#                 raise RuntimeError("socket connection broken")
-#             totalsent = totalsent + sent
+        total_sent = 0
+        while total_sent < len(msg):
+            sent = self.sock.send(msg)
+            total_sent += sent
 
     def close(self):
         self.sock.close()

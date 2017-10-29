@@ -14,7 +14,7 @@ module vegas_mod
    integer, parameter :: EXTERNAL_FUNCTIONS = 6
    integer, parameter :: MXDIM = 26
    real(dp), parameter :: ALPHA = 1.5d0
-   logical, parameter :: kahan = .true.
+   logical, parameter :: kahan = .false.
    ! Write.read the grid using hexadecimal because that's what the old version uses
    character(len=9), parameter :: grid_fmt = "(/(5z16))"
 

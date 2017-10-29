@@ -40,6 +40,7 @@ void socket_creation_(int *socket_id, char *host, int *port, int *ifail) {
     bzero((char *) &serv_addr, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
     bcopy((char *) server->h_addr, (char *) &serv_addr.sin_addr.s_addr, server->h_length);
+
     serv_addr.sin_port = htons(*port);
 
     if (connect(*socket_id, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0 ) {
@@ -85,7 +86,16 @@ void socket_exchange_(unsigned char *data, int *len, char *host, int *port, int 
     /*
      * Wait for the new batch of information
      */
-    n = read(sockfd, data, *len);
+    int n_received = 0;
+    int i;
+    unsigned char buffer[256];
+    while (n_received < *len) {
+        n = read(sockfd, buffer, 255);
+        for (i = 0; i < n ; i++){
+            data[n_received + i] = buffer[i];
+        }
+        n_received += n;
+    }
 
     if (n < 0) {
         perror("Error reading from socket");
