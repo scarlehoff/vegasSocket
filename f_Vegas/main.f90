@@ -23,7 +23,7 @@ program vegas_example
 
    n_dim = 9
    n_iter = 10
-   n_events = 1d6
+   n_events = 1d7
 
    call vegas(lepage_test, n_dim, n_iter, n_events, res, sigma, chi2)
 

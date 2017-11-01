@@ -32,8 +32,10 @@ module vegas_mod
 
    logical :: socketed_warmup = .false.
    logical :: warmup_flag = .true. 
+   logical :: verbose = .true.
    integer :: n_events_initial, n_events_final
    integer :: n_sockets, socket_number
+   integer :: ev_counter
 
    contains
       subroutine activate_parallel_sockets(n_sockets_in, socket_number_in, hostname_in, port_in)
@@ -75,7 +77,7 @@ module vegas_mod
          real(dp), intent(out) :: final_result, sigma, chi2
          real(dp), external, optional :: sigR, sigS, sigV, sigT, sigVV, sigU
 
-         integer :: i, j, k, ind, n_events_per_instance
+         integer :: i, j, k, ind, n_events_per_instance, n_check
          real(dp) :: tmp, tmp2, err_tmp, err_tmp2, xjac, wgt, xwgt
          ! Random variables vector
          real(dp), dimension(n_dim) :: x
@@ -182,7 +184,9 @@ module vegas_mod
          else
             n_events_initial = 1
             n_events_final = n_events
+            n_events_per_instance = n_events
          endif
+         n_check = n_events_per_instance/10
 
          !$ print *, " $ OMP active"
          !$ print *, " $ Maximum number of threads: ", OMP_get_num_procs()
@@ -202,6 +206,7 @@ module vegas_mod
          !> Start integration loop
          !>
          do k = 1, n_iter
+            ev_counter = 0
             close(log_unit) 
             open(unit = log_unit, file=trim(log_filename), position="Append", action="write")
             do i = 1, 2
@@ -224,10 +229,11 @@ module vegas_mod
             !$omp& shared(resultados, socketed_warmup, n_sockets, hostname, port) &
             !$omp& shared(res, res2, err_r, err_r2) &
             !$omp& shared(ar_res, ar_res2, ar_err, ar_err2) &
+            !$omp& shared(ev_counter) &
             !$omp& copyin(/eweakZ/,/eweakW/,/pmasses/,/currentprocess/)
             call init_parallel()
 #else
-            !$omp parallel private(tmp,tmp2,xwgt,wgt,x,div_index) shared(divisions, grid_data)
+            !$omp parallel private(tmp,tmp2,xwgt,wgt,x,div_index) 
 #endif
 
             !$omp do 
@@ -284,6 +290,11 @@ module vegas_mod
                         ar_err2(ind, j) = ar_err2(ind, j) + error_sum(ar_err2(ind,j), tmp2)
                      endif
                   enddo
+               endif
+               ev_counter = ev_counter + 1
+               if ((mod(ev_counter, n_check) == 0).and.(verbose)) then
+                  write(6,'(A,I0,A)') "  > > Current progress: ", floor((1.0*ev_counter)/n_check*10), "%"
+                  flush(6)
                endif
                !$omp end critical
             enddo
@@ -374,6 +385,8 @@ module vegas_mod
 
             !> Resets grid_data after every iteration
             grid_data(:,:,:) = 0d0
+
+            call flush(6)
 
          enddo
 
