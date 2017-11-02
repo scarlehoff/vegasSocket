@@ -10,13 +10,18 @@ module vegas_mod
 
    ! Parameters
    integer, parameter :: dp = kind(1.d0)
+   
+   ! Subdivisions of the Vegas grid per dimension
    integer, parameter :: NDMX = 100
+   ! Damping parameter, alpha = 0d0 -> no adaptation
+   real(dp), parameter :: ALPHA = 1.5d0
+   ! Kahan summation for improved numerical precision
+   logical, parameter :: kahan = .false.
+   ! Write & read the grid using hexadecimal 
+   character(len=9), parameter :: grid_fmt = "(/(5z16))"
+   ! Legacy vegas compatibility
    integer, parameter :: EXTERNAL_FUNCTIONS = 6
    integer, parameter :: MXDIM = 26
-   real(dp), parameter :: ALPHA = 1.5d0
-   logical, parameter :: kahan = .false.
-   ! Write.read the grid using hexadecimal because that's what the old version uses
-   character(len=9), parameter :: grid_fmt = "(/(5z16))"
 
    type resultado
       real(dp) :: sigma = 0d0
@@ -24,18 +29,19 @@ module vegas_mod
       real(dp) :: integral = 0d0
       real(dp) :: chi2 = 0d0
    end type resultado
-   type(resultado), allocatable, dimension(:) :: resultados
 
    ! Socket data
    character(len=:), allocatable :: hostname
    integer :: port, ifail
-
    logical :: socketed_warmup = .false.
+
+   ! General attributes
    logical :: warmup_flag = .true. 
    logical :: verbose = .true.
-   integer :: n_events_initial, n_events_final
    integer :: n_sockets, socket_number
+   integer :: n_events_initial, n_events_final
    integer :: ev_counter
+   type(resultado), allocatable, dimension(:) :: resultados
 
    contains
       subroutine activate_parallel_sockets(n_sockets_in, socket_number_in, hostname_in, port_in)
@@ -269,12 +275,12 @@ module vegas_mod
                !> 2) we want to use the pointers for clarity
                !> Todo: benchmark how much faster would reduction be
                !> 
-               res = res + tmp
-               res2 = res2 + tmp2
                if (kahan) then
                   err_r = err_r + error_sum(res, tmp)
                   err_r2 = err_r2 + error_sum(res2, tmp2)
                endif
+               res = res + tmp
+               res2 = res2 + tmp2
                !>
                !> We also need to store the value of the integral for each subdivision of the 
                !> integration region
@@ -283,12 +289,12 @@ module vegas_mod
                if (warmup_flag) then
                   do j = 1, n_dim
                      ind = div_index(j) 
+                     if (kahan) then
+!                          ar_err(ind, j) = ar_err(ind, j) + error_sum(ar_res(ind,j), tmp)
+                        ar_err2(ind, j) = ar_err2(ind, j) + error_sum(ar_res2(ind,j), tmp2)
+                     endif
 !                       ar_res(ind, j) = ar_res(ind, j) + tmp2
                      ar_res2(ind, j) = ar_res2(ind, j) + tmp2
-                     if (kahan) then
-!                          ar_err(ind, j) = ar_err(ind, j) + error_sum(ar_err(ind,j), tmp2)
-                        ar_err2(ind, j) = ar_err2(ind, j) + error_sum(ar_err2(ind,j), tmp2)
-                     endif
                   enddo
                endif
                ev_counter = ev_counter + 1
@@ -301,8 +307,10 @@ module vegas_mod
             !$omp enddo
 
             if (kahan) then
+               !$omp single
                res = res + err_r
                res2 = res2 + err_r2
+               !$omp end single
                !$omp do 
                do j = 1, n_dim
 !                    ar_res(:,j) = ar_res(:,j) + ar_err(:,j)
@@ -351,7 +359,8 @@ module vegas_mod
             !> Compute the error
             !> S^2 =  (<f^2/p> - <f>^2)/N (with <g> = \int g (pdp))
             !> 
-            err_tmp2 = (n_events*res2 - res**2)/(n_events-1d0)
+            tmp = dsqrt(n_events*res2) 
+            err_tmp2 = (tmp-res)*(tmp+res)/(n_events-1d0)
             if (err_tmp2 < 0d0) then
                err_tmp = 1d-30
             else
