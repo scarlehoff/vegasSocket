@@ -10,13 +10,15 @@ module vegas_mod
 
    ! Parameters
    integer, parameter :: dp = kind(1.d0)
+   logical, parameter :: verbose_progress = .true.
+   integer, parameter :: debug_level = 0
    
    ! Subdivisions of the Vegas grid per dimension
    integer, parameter :: NDMX = 100
    ! Damping parameter, alpha = 0d0 -> no adaptation
    real(dp), parameter :: ALPHA = 1.5d0
    ! Kahan summation for improved numerical precision
-   logical, parameter :: kahan = .false.
+   logical, parameter :: kahan = .true. 
    ! Write & read the grid using hexadecimal 
    character(len=9), parameter :: grid_fmt = "(/(5z16))"
    ! Legacy vegas compatibility
@@ -36,8 +38,8 @@ module vegas_mod
    logical :: socketed_warmup = .false.
 
    ! General attributes
-   logical :: warmup_flag = .true. 
-   logical :: verbose = .true.
+   logical :: warmup_flag = .true.
+   logical :: writegrid = .true.
    integer :: n_sockets, socket_number
    integer :: n_events_initial, n_events_final
    integer :: ev_counter
@@ -192,11 +194,15 @@ module vegas_mod
             n_events_final = n_events
             n_events_per_instance = n_events
          endif
-         n_check = n_events_per_instance/10
+         n_check = ceiling(n_events_per_instance/10d0)
 
          !$ print *, " $ OMP active"
          !$ print *, " $ Maximum number of threads: ", OMP_get_num_procs()
          !$ print *, " $ Number of threads selected: ", OMP_get_max_threads()
+
+         !> Debug Level = 1
+         !> Don't write warmup grid file
+         if (debug_level == 1) writegrid = .false.
 
          !> Initial rebining
          !> we can either create a new grid or read an old one
@@ -235,7 +241,7 @@ module vegas_mod
             !$omp& shared(resultados, socketed_warmup, n_sockets, hostname, port) &
             !$omp& shared(res, res2, err_r, err_r2) &
             !$omp& shared(ar_res, ar_res2, ar_err, ar_err2) &
-            !$omp& shared(ev_counter) &
+            !$omp& shared(ev_counter, n_check) &
             !$omp& copyin(/eweakZ/,/eweakW/,/pmasses/,/currentprocess/)
             call init_parallel()
 #else
@@ -293,12 +299,12 @@ module vegas_mod
 !                          ar_err(ind, j) = ar_err(ind, j) + error_sum(ar_res(ind,j), tmp)
                         ar_err2(ind, j) = ar_err2(ind, j) + error_sum(ar_res2(ind,j), tmp2)
                      endif
-!                       ar_res(ind, j) = ar_res(ind, j) + tmp2
+!                       ar_res(ind, j) = ar_res(ind, j) + tmp 
                      ar_res2(ind, j) = ar_res2(ind, j) + tmp2
                   enddo
                endif
                ev_counter = ev_counter + 1
-               if ((mod(ev_counter, n_check) == 0).and.(verbose)) then
+               if ((mod(ev_counter, n_check) == 0).and.(verbose_progress)) then
                   write(6,'(A,I0,A)') "  > > Current progress: ", floor((1.0*ev_counter)/n_check*10), "%"
                   flush(6)
                endif
@@ -377,7 +383,7 @@ module vegas_mod
             resultados(k)%integral = res
             call print_final_results(k, final_result, sigma, chi2, log_unit)
 
-            if (warmup_flag) then
+            if ((warmup_flag).and.(writegrid)) then
                call write_grid_down(n_dim, divisions, grid_filename)
                write(log_unit, *) "Writing grid to " // grid_filename
             endif
