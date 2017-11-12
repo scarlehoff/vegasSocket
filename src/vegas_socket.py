@@ -126,7 +126,7 @@ class Vegas_Socket(Generic_Socket):
         data = self.receive_data(4)
         return int.from_bytes(data, byteorder="little")
 
-    def harmonize_integral(self, n_jobs, verbose = None):
+    def harmonize_integral(self, n_jobs, verbose = None, take_control = False):
         """ Get the partial vegas integrals from the different n_jobs
         and send the sum back to each and every job.
         Only exits with success once all jobs receive their data
@@ -168,14 +168,18 @@ class Vegas_Socket(Generic_Socket):
         if verbose:
             print("Total value of the integral received: " + str(integral_value))
             print("Sending it back to all clients")
+
+        if take_control:
+            print("Warning, you just hijacked the connection, don't do anything evil!")
+            print("Variable to be sent is integral_value, number of elements: {}".format(doubles))
+            import pdb 
+            pdb.set_trace()
+
         while job_sockets:
             job_socket = job_sockets.pop()
             job_socket.send_total_integral(integral_value)
 
         return 0
-        
-        
-
 
 def example_server(port):
     s = Vegas_Socket()

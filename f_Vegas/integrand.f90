@@ -39,6 +39,8 @@ function lepage_test(x, n)
    real(dp) :: a, pref, coef
    integer :: i
 
+   ! Result after integration = 1.0
+
    a = 0.1d0
    pref = (1d0/a/dsqrt(pi))**n
    coef = 0d0
@@ -53,4 +55,3 @@ function lepage_test(x, n)
    lepage_test = pref*exp(-coef)
 
 end function lepage_test
-

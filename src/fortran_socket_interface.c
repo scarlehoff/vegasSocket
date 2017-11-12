@@ -15,8 +15,6 @@ void socket_send_with_id_(int*, unsigned char*, int*);
 void socket_read_with_id_(int*, unsigned char*, int*);
 
 
-
-
 void socket_creation_(int *socket_id, char *host, int *port, int *ifail) {
     *ifail = 1;
 
@@ -50,11 +48,9 @@ void socket_creation_(int *socket_id, char *host, int *port, int *ifail) {
 
 }
 
-
 /*
  * These functions receive as an input host and port and create the socket before
  * doing anything else
- *
  */
 void socket_exchange_(unsigned char *data, int *len, char *host, int *port, int *ifail) {
     /*
@@ -103,8 +99,10 @@ void socket_exchange_(unsigned char *data, int *len, char *host, int *port, int 
     }
 
     *ifail = 0;
-
 }
+
+
+
 
 void socket_send_(unsigned char *data, int *len, char *host, int *port, int *ifail) {
     /*
@@ -160,5 +158,3 @@ void socket_read_with_id_(int *socket_id, unsigned char *data, int *len) {
     }
 }
     
-
-
