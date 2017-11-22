@@ -180,12 +180,12 @@ module vegas_mod
             n_events_per_instance = n_events/n_sockets
             n_events_initial = 1 + n_events_per_instance*(socket_number-1)
             n_events_final = socket_number*n_events_per_instance
-            if (socket_number == 1) then
+            if (socket_number == n_sockets) then
                n_events_final = n_events_final + mod(n_events, n_sockets)
             endif
             do i = 1, 2
                write(units(i),'(A,I0,A,I0)') " > > > Vegas instance No: ", socket_number, " of ", n_sockets
-               write(units(i),'(A,I0,A)') " > > > Running for ", n_events_per_instance, " events per instance"
+               write(units(i),'(A,I0,A)') " > > > Running for ", n_events_final + 1 - n_events_initial, " events for this instance"
                write(units(i),'(A,I0)') " > > > From: ", n_events_initial
                write(units(i),'(A,I0)') " > > > To: ", n_events_final
             enddo
@@ -248,7 +248,7 @@ module vegas_mod
             !$omp parallel private(tmp,tmp2,xwgt,wgt,x,div_index) 
 #endif
 
-            !$omp do 
+            !$omp do schedule(dynamic)
             do i = n_events_initial, n_events_final
 
                !>
