@@ -8,19 +8,32 @@ MODULES = Vegas.f90
 OBJDIR = obj
 MODDIR = mod
 OBJFILES = $(addprefix $(OBJDIR)/, $(patsubst %.f90,%.o, $(CORE)))
-MODFILES = $(addprefix $(MODDIR)/, $(patsubst %.f90,%.o, $(MODULES)))
+MODFILES = $(addprefix $(OBJDIR)/, $(patsubst %.f90,%.o, $(MODULES)))
 
-FFLAGS = -Wall -Og -ggdb -cpp -fopenmp -fbounds-check -J $(OBJDIR)
+
+# FC = ifort
+ifeq ($(FC), ifort)
+	LD = ifort
+	FFLAGS = -g -qopenmp -fpp -D USE_IFORT -module $(MODDIR)
+else
+	FFLAGS = -Wall -Og -ggdb -cpp -fopenmp -fbounds-check -J $(MODDIR)
+endif
 
 ifeq ($(mode), sockets)
-	LIBPATH = ../lib
-	LDFLAGS = -lgfortran -Wl,-rpath,$(LIBPATH)
-	FFLAGS += -L$(LIBPATH) -lfortran_interface -D USE_SOCKETS
+	ifeq ($(FC), ifort)
+		LIBPATH = ../lib
+		LDFLAGS = -Wl,-rpath,$(LIBPATH)
+		FFLAGS += -L$(LIBPATH) -lfortran_interface -D USE_SOCKETS
+	else
+		LIBPATH = ../lib
+		LDFLAGS = -lgfortran -Wl,-rpath,$(LIBPATH)
+		FFLAGS += -L$(LIBPATH) -lfortran_interface -D USE_SOCKETS
+	endif
 endif
 
 .PHONY: all clean dirs
 
-$(MODDIR)/%.o: %.f90 | dirs
+$(OBJDIR)/%.o: %.f90 | dirs
 	@echo "Building: $<"
 	@$(FC) $(FFLAGS) -c $< -o $@
 

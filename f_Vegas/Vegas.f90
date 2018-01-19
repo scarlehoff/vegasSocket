@@ -1,9 +1,12 @@
 module vegas_mod
+#ifdef USE_IFORT
+   use ifport ! ifort rand is included here
+#endif
 !$ use omp_lib
    implicit none
    private
 
-   public :: vegas, vegasnr_new, activate_parallel_sockets, recover_run
+   public :: vegas, activate_parallel_sockets, recover_run
 
    ! Parameters
    integer, parameter :: dp = kind(1.d0)
@@ -115,7 +118,6 @@ module vegas_mod
          ! ar_[] stores the result of [] for each of the NDMX, n_dim vegas subdivisions
          real(dp), dimension(:,:), pointer :: ar_res, ar_res2
          real(dp), dimension(:,:), pointer :: ar_err, ar_err2
-
 
 
 #ifndef USE_SOCKETS
@@ -271,7 +273,7 @@ module vegas_mod
                endif
                ev_counter = ev_counter + 1
                if ((mod(ev_counter, n_check) == 0).and.(verbose_progress)) then
-                  write(6,'(A,I0,A)') "  > > Current progress: ", floor((1.0*ev_counter)/n_check*10), "%"
+                  write(6,'(A,A,I0,A)', advance="no") achar(13), " > > Current progress: ", floor((1.0*ev_counter)/n_check*10), "%"
                   flush(6)
                endif
                !$omp end critical
@@ -363,17 +365,6 @@ module vegas_mod
          close(log_unit)
 
       end subroutine vegas
-
-      subroutine vegasnr_new(region, ndim, fxn, init, ncall, itmx, nprn, tgral, sd, &
-            chi2a, sigR, sigS, sigV, sigT, sigVV, sigU)
-         real(dp), dimension(2*MXDIM), intent(in) :: region
-         integer, intent(in) :: ndim, init, ncall, itmx, nprn
-         real(dp), intent(out) :: tgral, sd, chi2a
-         real(dp), external :: fxn
-         real(dp), external :: sigR, sigS, sigV, sigT, sigVV, sigU
-         call vegas(fxn, ndim, itmx, ncall, tgral, sd, chi2a, sigR, sigS, sigV, sigT, sigVV, sigU)
-
-      end subroutine vegasnr_new
 
       subroutine print_final_results(k_iter, final_result, sigma, chi2, log_unit)
          integer, intent(in) :: k_iter
