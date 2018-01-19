@@ -6,7 +6,7 @@ module vegas_mod
    implicit none
    private
 
-   public :: vegas, vegasnr_new, activate_parallel_sockets
+   public :: vegas, vegasnr_new, activate_parallel_sockets, recover_run
 
    ! Parameters
    integer, parameter :: dp = kind(1.d0)
@@ -40,9 +40,11 @@ module vegas_mod
    ! General attributes
    logical :: warmup_flag = .true.
    logical :: writegrid = .true.
+   logical :: recover_grid = .false.
    integer :: n_sockets, socket_number
    integer :: n_events_initial, n_events_final
    integer :: ev_counter
+   character(len=128) :: grid_filename = "vegas_grid.grid"
    type(resultado), allocatable, dimension(:) :: resultados
 
    contains
@@ -74,8 +76,15 @@ module vegas_mod
          else
             port = 8888
          endif
-
       end subroutine
+
+      subroutine recover_run(old_grid_file)
+         character(len=128), optional, intent(in) :: old_grid_file
+         recover_grid = .true.
+         if (present(old_grid_file)) then
+            grid_filename = old_grid_file
+         endif
+      end subroutine 
 
       subroutine vegas(f_integrand, n_dim, n_iter, n_events, final_result, sigma, chi2, &
            sigR, sigS, sigV, sigT, sigVV, sigU )
@@ -106,7 +115,6 @@ module vegas_mod
          real(dp), dimension(:,:), pointer :: ar_err, ar_err2
 
          ! Vegas output files
-         character(len=128) :: grid_filename = "vegas_grid.grid"
          character(len=128) :: log_filename = "vegas_output.log"
          integer, parameter :: log_unit = 506
          integer, dimension(2) :: units
@@ -118,13 +126,9 @@ module vegas_mod
          integer :: veg_iave, veg_it
          real(dp) :: veg_wgt, veg_swgt
          integer :: iproc
-         character(len=128) gridfile
-         character(len=128) slogname
-         logical :: bin
          real(dp) :: dv2g
          integer :: npg
          common /vegasiterweight/veg_wgt,veg_iave,veg_it,veg_swgt
-         common /bin/bin
          common /vegasnumcalls/dv2g,npg
          common /eweakZ/amz,zewfac(4),zewnull(4)
          !$omp threadprivate(/eweakZ/)
@@ -134,11 +138,6 @@ module vegas_mod
          !$omp threadprivate(/pmasses/)
          common /currentprocess/iproc
          !$omp threadprivate(/currentprocess/)
-         common /gridfilename/gridfile
-         common /log/slogname
-         grid_filename = gridfile
-         log_filename = slogname
-         bin = .false.
 #endif 
 
 #ifndef USE_SOCKETS
@@ -206,7 +205,7 @@ module vegas_mod
 
          !> Initial rebining
          !> we can either create a new grid or read an old one
-         if (warmup_flag) then
+         if ((warmup_flag).and.(.not.recover_grid)) then
             do j = 1, n_dim
                call rebin(1d0/NDMX, NDMX, rweight, divisions(:, j))
             enddo
@@ -418,6 +417,17 @@ module vegas_mod
          real(dp), intent(out) :: tgral, sd, chi2a
          real(dp), external :: fxn
          real(dp), external :: sigR, sigS, sigV, sigT, sigVV, sigU
+#ifdef USE_NNLOJET
+         character(len=128) gridfile
+         character(len=128) slogname
+         logical :: bin
+         common /gridfilename/gridfile
+         common /log/slogname
+         common /bin/bin
+         grid_filename = gridfile
+         log_filename = slogname
+         bin = .false.
+#endif
          !>
          !> Wrapper for programs that call the old version of vegas
          !> It uses the same argument names as the old version

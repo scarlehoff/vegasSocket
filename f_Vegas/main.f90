@@ -1,5 +1,5 @@
 program vegas_example
-   use Vegas_mod, only : vegas, activate_parallel_sockets
+   use Vegas_mod, only : vegas, activate_parallel_sockets, recover_run
    implicit none
    integer, parameter :: dp = kind(1.d0)
    real(dp), external :: test_integrand, strange_test, lepage_test
@@ -23,8 +23,9 @@ program vegas_example
 
    n_dim = 9
    n_iter = 10
-   n_events = 1d7
+   n_events = 1d6
 
+   call recover_run()
    call vegas(lepage_test, n_dim, n_iter, n_events, res, sigma, chi2)
 
    print *, "integral total is: ", res, "+/-", sigma
