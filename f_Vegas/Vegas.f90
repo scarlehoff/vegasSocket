@@ -1,7 +1,4 @@
 module vegas_mod
-#ifdef USE_NNLOJET
-   use pmap, only: clear_pstore
-#endif
 !$ use omp_lib
    implicit none
    private
@@ -44,8 +41,13 @@ module vegas_mod
    integer :: n_sockets, socket_number
    integer :: n_events_initial, n_events_final
    integer :: ev_counter
-   character(len=128) :: grid_filename = "vegas_grid.grid"
    type(resultado), allocatable, dimension(:) :: resultados
+
+   ! Vegas output files
+   character(len=128) :: log_filename = "vegas_output.log"
+   integer, parameter :: log_unit = 506
+   integer, dimension(2) :: units
+   character(len=128) :: grid_filename = "vegas_grid.grid"
 
    contains
       subroutine activate_parallel_sockets(n_sockets_in, socket_number_in, hostname_in, port_in)
@@ -114,31 +116,7 @@ module vegas_mod
          real(dp), dimension(:,:), pointer :: ar_res, ar_res2
          real(dp), dimension(:,:), pointer :: ar_err, ar_err2
 
-         ! Vegas output files
-         character(len=128) :: log_filename = "vegas_output.log"
-         integer, parameter :: log_unit = 506
-         integer, dimension(2) :: units
 
-#ifdef USE_NNLOJET
-         real(dp) :: amz, zewfac, zewnull
-         real(dp) :: amzW, stw, ewfac
-         real(dp) :: rma2, rmb2, rm2, shat
-         integer :: veg_iave, veg_it
-         real(dp) :: veg_wgt, veg_swgt
-         integer :: iproc
-         real(dp) :: dv2g
-         integer :: npg
-         common /vegasiterweight/veg_wgt,veg_iave,veg_it,veg_swgt
-         common /vegasnumcalls/dv2g,npg
-         common /eweakZ/amz,zewfac(4),zewnull(4)
-         !$omp threadprivate(/eweakZ/)
-         common /eweakW/amzW,stw,ewfac
-         !$omp threadprivate(/eweakW/)
-         common /pmasses/rma2,rmb2,rm2(1:7),shat
-         !$omp threadprivate(/pmasses/)
-         common /currentprocess/iproc
-         !$omp threadprivate(/currentprocess/)
-#endif 
 
 #ifndef USE_SOCKETS
          socketed_warmup = .false.
@@ -234,18 +212,7 @@ module vegas_mod
                endif
             endif
 
-#ifdef USE_NNLOJET
-            !$omp parallel default(private) shared(divisions, grid_data) &
-            !$omp& shared(n_dim, n_events_initial, n_events_final, xjac, warmup_flag) &
-            !$omp& shared(resultados, socketed_warmup, n_sockets, hostname, port) &
-            !$omp& shared(res, res2, err_r, err_r2) &
-            !$omp& shared(ar_res, ar_res2, ar_err, ar_err2) &
-            !$omp& shared(ev_counter, n_check) &
-            !$omp& copyin(/eweakZ/,/eweakW/,/pmasses/,/currentprocess/)
-            call init_parallel()
-#else
             !$omp parallel private(tmp,tmp2,xwgt,wgt,x,div_index) 
-#endif
 
             !$omp do schedule(dynamic)
             do i = n_events_initial, n_events_final
@@ -353,10 +320,6 @@ module vegas_mod
                !$omp end do
             endif
   
-#ifdef USE_NNLOJET
-            call destroy_parallel()
-            call clear_pstore()
-#endif
 
             !$omp end parallel
             !>
@@ -387,15 +350,6 @@ module vegas_mod
                write(log_unit, *) "Writing grid to " // grid_filename
             endif
 
-#ifdef USE_NNLOJET
-            if(.not.warmup_flag) then
-               veg_it = k
-               veg_wgt = res
-               veg_swgt = final_result
-               npg = n_events ! Since we are not doing stratified sampling npg=n_events
-               call bino(2,0d0,0)
-            endif
-#endif 
 
             !> Resets grid_data after every iteration
             grid_data(:,:,:) = 0d0
@@ -417,30 +371,6 @@ module vegas_mod
          real(dp), intent(out) :: tgral, sd, chi2a
          real(dp), external :: fxn
          real(dp), external :: sigR, sigS, sigV, sigT, sigVV, sigU
-#ifdef USE_NNLOJET
-         character(len=128) gridfile
-         character(len=128) slogname
-         logical :: bin
-         common /gridfilename/gridfile
-         common /log/slogname
-         common /bin/bin
-         grid_filename = gridfile
-         log_filename = slogname
-         bin = .false.
-#endif
-         !>
-         !> Wrapper for programs that call the old version of vegas
-         !> It uses the same argument names as the old version
-         !>
-         print *, " > > Entering legacy wrapper for NNLOJET with Vegas! < < "
-
-         select case(init)
-         case(0)
-            warmup_flag = .true.
-         case(1)
-            warmup_flag = .false.
-         end select
-            
          call vegas(fxn, ndim, itmx, ncall, tgral, sd, chi2a, sigR, sigS, sigV, sigT, sigVV, sigU)
 
       end subroutine vegasnr_new
@@ -472,21 +402,12 @@ module vegas_mod
          !> Prints to stdout and a .log file
          !>
          do i = 1, 2
-#ifdef USE_NNLOJET
-            write(units(i),201) k_iter, resultados(k_iter)%integral, final_result, resultados(k_iter)%sigma, sigma, chi2
-      201 format(/ &
-     &   '************* Integration by Vegas (iteration ',i3,') **************',/ '*',63x,'*'/, &
-     &   '*  integral  = ',g14.8,2x, ' accum. integral = ',g14.8,'*'/, &
-     &   '*  std. dev. = ',g14.8,2x, ' accum. std. dev = ',g14.8,'*'/,'*',63x,'*'/, &
-     &   '**************   chi**2/iteration = ', g10.4,'   ****************' /)
-#else
             write(units(i),201) k_iter, resultados(k_iter)%integral, resultados(k_iter)%sigma, final_result, sigma, chi2
       201 format(/&
          & 'Result for iteration number ',I0,':',/, &
          & ' > > > I = ', g14.8,' +/- ', g14.8,/, &
          & ' > Total result: ', g14.8,' +/- ', g14.8,/, &
          & ' > chi2/n-1: ', g10.4/)
-#endif
          enddo
 
       end subroutine print_final_results
@@ -673,21 +594,13 @@ module vegas_mod
          !>
          !> Wrapper for srand
          !>
-#ifndef USE_NNLOJET
-         call srand(seed)
-#endif
       end subroutine seed_rand
 
       real(dp) function internal_rand()
          !>
          !> Wrapper for the generation of random variables
          !>
-#ifdef USE_NNLOJET
-         real(dp) :: rn
-         internal_rand = rn()
-#else
          internal_rand = rand()
-#endif
       end function internal_rand
 
       subroutine roll_random(ini, fin, n_dim)
