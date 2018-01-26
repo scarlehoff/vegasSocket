@@ -301,6 +301,7 @@ module vegas_mod
             !>
             if (socketed_warmup) then
                !$omp single
+               write(*,*)
                write(*,'(A,A,A,I0)')"Communicating with server at ", hostname, ":", port
                call socket_exchange(grid_data, size(grid_data)*dp, hostname, port, ifail)
                if (ifail == 0) then

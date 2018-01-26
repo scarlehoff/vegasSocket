@@ -1,5 +1,3 @@
-FC = gfortran
-LD = gfortran
 EXECUTABLE = run_example
 
 CORE = integrand.f90 main.f90
@@ -10,12 +8,12 @@ MODDIR = mod
 OBJFILES = $(addprefix $(OBJDIR)/, $(patsubst %.f90,%.o, $(CORE)))
 MODFILES = $(addprefix $(OBJDIR)/, $(patsubst %.f90,%.o, $(MODULES)))
 
-
-# FC = ifort
 ifeq ($(FC), ifort)
 	LD = ifort
 	FFLAGS = -g -qopenmp -fpp -D USE_IFORT -module $(MODDIR)
 else
+	FC = gfortran
+	LD = gfortran
 	FFLAGS = -Wall -Og -ggdb -cpp -fopenmp -fbounds-check -J $(MODDIR)
 endif
 
