@@ -10,8 +10,10 @@ module vegas_mod
 
    ! Parameters
    integer, parameter :: dp = kind(1.d0)
-   logical, parameter :: verbose_progress = .true.
+   logical, parameter :: verbose_progress = .true. 
    integer, parameter :: debug_level = 0
+   real(dp), parameter :: percentage_grain = 20d0
+   real(dp), parameter :: percentage_mult = 100d0/percentage_grain
    
    ! Subdivisions of the Vegas grid per dimension
    integer, parameter :: NDMX = 100
@@ -173,7 +175,7 @@ module vegas_mod
             n_events_final = n_events
             n_events_per_instance = n_events
          endif
-         n_check = ceiling(n_events_per_instance/10d0)
+         n_check = ceiling(n_events_per_instance/percentage_grain)
 
          !$ print *, " $ OMP active"
          !$ print *, " $ Maximum number of threads: ", OMP_get_num_procs()
@@ -271,10 +273,8 @@ module vegas_mod
                      ar_res2(ind, j) = ar_res2(ind, j) + tmp2
                   enddo
                endif
-               ev_counter = ev_counter + 1
-               if ((mod(ev_counter, n_check) == 0).and.(verbose_progress)) then
-                  write(6,'(A,A,I0,A)', advance="no") achar(13), " > > Current progress: ", floor((1.0*ev_counter)/n_check*10), "%"
-                  flush(6)
+               if (verbose_progress) then
+                  call progress_bar(n_check)
                endif
                !$omp end critical
             enddo
@@ -580,6 +580,19 @@ module vegas_mod
          db = b - bp
          error_sum = da + db
       end function error_sum
+
+      subroutine progress_bar(n_check)
+         !> Updates the progress bar every n_check events
+         integer, intent(in) :: n_check
+         integer :: current_progress
+         ev_counter = ev_counter + 1
+         if (mod(ev_counter, n_check) == 0) then
+            current_progress = floor((1.0*ev_counter)/n_check*percentage_mult)
+            write(6,'(A,A,I0,A)', advance="no") achar(13), " > > Current progress: ",  &
+                                 current_progress, "%"
+            flush(6)
+         endif
+      end subroutine progress_bar
 
       subroutine seed_rand(seed)
          integer, intent(in) :: seed
