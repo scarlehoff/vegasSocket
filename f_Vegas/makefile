@@ -29,7 +29,7 @@ ifeq ($(mode), sockets)
 	endif
 endif
 
-.PHONY: all clean dirs
+.PHONY: all clean dirs run
 
 $(OBJDIR)/%.o: %.f90 | dirs
 	@echo "Building: $<"
@@ -44,6 +44,9 @@ all: $(MODFILES) $(OBJFILES)
 	@$(LD) -o $(EXECUTABLE) $^ $(FFLAGS) $(LDFLAGS)
 
 dirs: $(MODDIR) $(OBJDIR)
+
+run: $(EXECUTABLE)
+	./$(EXECUTABLE)
 
 $(MODDIR) $(OBJDIR):
 	@mkdir -p $@

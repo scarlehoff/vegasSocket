@@ -25,7 +25,7 @@ program vegas_example
    n_iter = 10
    n_events = 1d5
 
-   call recover_run()
+!    call recover_run()
    call vegas(lepage_test, n_dim, n_iter, n_events, res, sigma, chi2)
 
    print *, "integral total is: ", res, "+/-", sigma
